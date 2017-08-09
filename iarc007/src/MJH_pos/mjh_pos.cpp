@@ -1,0 +1,226 @@
+#include <ros/ros.h>
+
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/opencv.hpp>
+
+#include <stdio.h>
+#include <string>
+
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/image_encodings.h>
+#include <cv_bridge/cv_bridge.h>
+
+#include <sensor_msgs/LaserScan.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/Vector3Stamped.h>
+
+#include <iarc007/vehicle_pos.h>
+
+using namespace cv;
+using namespace std;
+
+Mat src_img,dst_img,mid_img; //原始图、中间图和效果图
+vector<Vec4i> g_lines;  // 存储线段集合
+int g_nthreshold=100;   //变量接收的TrackBar位置参数
+
+static void on_HoughLines(int, void*); //回调函数
+
+float h; // Height of sonar
+
+FILE *fp,*fp1,*fp2,*fp3;
+
+ros::Subscriber imu_sub;
+ros::Subscriber velocity_sub;
+ros::Subscriber position_sub;
+ros::Subscriber ultrasonic_sub;
+
+/* Mono Video */
+void mono_sub_callback(sensor_msgs::Image img_msg)
+{ 
+	cv_bridge::CvImagePtr img_bridge_ptr = cv_bridge::toCvCopy(img_msg,sensor_msgs::image_encodings::RGB8);       
+	img_bridge_ptr->image.copyTo(src_img);       
+}
+
+/* imu */
+void imu_callback(const geometry_msgs::TransformStamped& g_imu)
+{ 
+	printf("mjh-frame_id: %s stamp: %d\n", g_imu.header.frame_id.c_str(), g_imu.header.stamp.sec );
+	printf("mjh-imu: [%f %f %f %f %f %f %f]\n", g_imu.transform.translation.x,g_imu.transform.translation.y,\
+	g_imu.transform.translation.z,g_imu.transform.rotation.x, g_imu.transform.rotation.y, g_imu.transform.rotation.z,\
+	g_imu.transform.rotation.w );
+
+	fprintf(fp1,"%s stamp: %d\n",  g_imu.header.frame_id.c_str(),g_imu.header.stamp.sec );
+	
+	fprintf(fp1,"x=%f y=%f z=%f\n",  g_imu.transform.translation.x, g_imu.transform.translation.y, g_imu.transform.translation.z);
+
+	fprintf(fp2,"%s stamp: %d\n",  g_imu.header.frame_id.c_str(),g_imu.header.stamp.sec );
+	
+	fprintf(fp2,"x=%f y=%f z=%f w=%f\n", g_imu.transform.rotation.x,g_imu.transform.rotation.y,g_imu.transform.rotation.z,g_imu.transform.rotation.w );
+
+	//roll,pitch,yaw
+}
+
+/* velocity */
+void velocity_callback(const geometry_msgs::Vector3Stamped& g_vo)
+{ 
+	printf("mjh--frame_id: %s stamp: %d\n", g_vo.header.frame_id.c_str(), g_vo.header.stamp.sec );
+	printf("mjh--velocity: [%f %f %f]\n", g_vo.vector.x, g_vo.vector.y, g_vo.vector.z );
+
+	fprintf(fp3,"%s stamp: %d\n",  g_vo.header.frame_id.c_str(), g_vo.header.stamp.sec );
+
+	fprintf(fp3,"x=%f y=%f z=%f\n",  g_vo.vector.x, g_vo.vector.y, g_vo.vector.z);
+}
+
+/* ultrasonic */
+void ultrasonic_callback(const sensor_msgs::LaserScan& g_ul)
+{ 
+	printf("mjh-frame_id: %s stamp: %d\n", g_ul.header.frame_id.c_str(), g_ul.header.stamp.sec );
+
+	for (int i = 0; i < 5; i++){
+		printf("mjh--ultrasonic distance: [%f]  reliability: [%d]\n", g_ul.ranges[i], (int)g_ul.intensities[i] );
+	}
+
+	h = g_ul.ranges[0];
+}
+
+/* motion */
+void position_callback(const geometry_msgs::Vector3Stamped& g_pos)
+{
+	printf("mjh--frame_id:%s stamp: %d\n", g_pos.header.frame_id.c_str(), g_pos.header.stamp.sec);
+	for (int i = 0; i < 3; i++){
+		printf("mjh--global position: [%f %f %f]\n", g_pos.vector.x, g_pos.vector.y, g_pos.vector.z);
+	}
+	fprintf(fp,"%s stamp: %d\n", g_pos.header.frame_id.c_str(), g_pos.header.stamp.sec);
+	
+	fprintf(fp,"x=%f y=%f z=%f\n", g_pos.vector.x, g_pos.vector.y, g_pos.vector.z);
+}
+
+int main(int argc, char** argv)
+{
+	ros::init(argc,argv,"hy_opencv_test");
+	ros::NodeHandle my_node;
+
+	fp = fopen("src/iarc007/doc/data/postion.txt","w");
+	if(!fp){
+		printf("File open failed\n");
+	}
+
+	fp1 = fopen("src/iarc007/doc/data/acc.txt","w");
+	if(!fp1){
+		printf("File open failed\n");
+	}
+
+	fp2 = fopen("src/iarc007/doc/data/pose.txt","w");
+	if(!fp2){
+		printf("File open failed\n");
+	}
+
+	fp3 = fopen("src/iarc007/doc/data/velocity.txt","w");
+	if(!fp3){
+		printf("File open failed\n");
+	}
+
+	/*            
+	VideoCapture cap;
+
+	if( argc < 2 )
+		cap.open(1);
+	else
+		cap.open(std::string(argv[1]));
+
+	if( !cap.isOpened() )
+	{
+		printf("\nCan not open camera or video file\n");
+		return -1;
+	}
+
+	cap >> g_srcImage;
+
+	if(!g_srcImag.data)
+	{
+		printf("can not read data from the video source\n");
+		return -1;
+	}
+	*/
+
+	/* Topic: mono_video -- Type: sensor_msgs::Image */
+	ros::Subscriber mono_video_sub = my_node.subscribe<sensor_msgs::Image>("/iarc007/mono_video",2,mono_sub_callback);
+	velocity_sub = my_node.subscribe("/guidance/velocity",4, velocity_callback);
+	position_sub = my_node.subscribe("/guidance/position",4, position_callback);
+	imu_sub = my_node.subscribe("/guidance/imu", 1, imu_callback);
+	ultrasonic_sub = my_node.subscribe("/guidance/ultrasonic", 1, ultrasonic_callback);
+
+	/* Loop for mono_sub_callback */
+	ros::Publisher pos_pub = my_node.advertise<iarc007::vehicle_pos>("mjh_pos",10);
+
+	ros::Rate rate(30);
+
+	iarc007::vehicle_pos pos;
+
+	namedWindow("video_result",1);
+	createTrackbar("value", "video_result",&g_nthreshold,200,on_HoughLines);   //创建滚动条
+
+	while(ros::ok())
+	{
+		//cap >> g_srcImage;
+
+	/*	if( src_img.data ){
+		      imshow("video_origin", src_img);     
+		}
+		else{
+		      printf("No data arrived! \n");
+		      ros::spinOnce();
+		      continue;
+		}
+
+		Canny(src_img, mid_img, 50, 200, 3); //进行Canny边缘检测
+		cvtColor(mid_img,dst_img, CV_GRAY2BGR); //转化边缘检测后的图为灰度图
+
+		imshow("video_canny", mid_img);
+
+		on_HoughLines(g_nthreshold,0);
+		HoughLinesP(mid_img, g_lines, 1, CV_PI/180, 80, 50, 10 );
+
+		int keycode = waitKey(1);
+		if( keycode == 27 )  // 按‘ESC’退出
+		    break;
+		       
+		pos_pub.publish(pos); // 发布结果
+	*/
+		ros::spinOnce();
+
+		rate.sleep();
+	}
+	
+	fclose(fp);
+	fclose(fp1);
+	fclose(fp2);
+	fclose(fp3);
+
+	return 0;
+}
+
+/*   -------------on_HoughLines( )-------     */
+/*   描述： 顶帽运算/黑帽运算 窗口的回调函数   */
+/* ---------------------- -------------------  */
+static void on_HoughLines(int, void*)
+{
+	/* 定义局部变量储存全局变量 */
+	Mat dst_img_tmp = Mat::zeros(dst_img.cols,dst_img.rows, CV_8UC3);
+
+	Mat mid_img_tmp = mid_img.clone();
+
+	/* 调用HoughLinesP函数 */
+	vector<Vec4i> mylines;
+	HoughLinesP(mid_img_tmp, mylines, 1, CV_PI/180, g_nthreshold+1, 50, 10 );
+
+	/* 循环遍历绘制每一条线段 */
+	for( size_t i = 0; i < mylines.size(); i++ )
+	{
+		Vec4i l = mylines[i];
+		line( dst_img_tmp, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(23,180,55), 1, CV_AA);
+	}
+
+	imshow("video_result",dst_img_tmp);
+}

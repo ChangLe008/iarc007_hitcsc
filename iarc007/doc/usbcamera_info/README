@@ -1,0 +1,3 @@
+UDEV:
+udevadm info -a -p $(udevadm info -q path -n /dev/video0)
+/etc/udev/rules.d/*

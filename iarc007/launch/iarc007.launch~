@@ -1,0 +1,14 @@
+<launch>
+
+   <node pkg="iarc007" type="hy_opencv_pub" name="mono_video_pub" output="screen">
+   </node>
+
+   <node pkg="iarc007" type="hy_opencv_sub" name="mono_video_sub" output="screen">
+	<param name="string_param" value="Hello HouYi"/>
+	<param name="int_param" value="1"/>
+   </node>
+
+   <node pkg="guidance" type="guidance_pub" name="GuidanceNode" output="screen">
+   </node>
+
+</launch>

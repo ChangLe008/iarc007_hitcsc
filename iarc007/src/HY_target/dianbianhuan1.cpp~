@@ -1,0 +1,38 @@
+#include "iarc007/hy_target/greentarget.h"
+
+using namespace std;
+using namespace cv;
+
+void ExtendCV::dianbianhuan1(CvMat* R,CvMat* P,double h,int u,int v,int h0)
+{
+	CvMat* UV=cvCreateMat(3,1,CV_32FC1);
+
+	CvMat* inverse=cvCreateMat(3,3,CV_32FC1);
+	double s;
+
+	//为图像坐标赋值
+	cvmSet(UV,0,0,u);
+	cvmSet(UV,1,0,v);
+	cvmSet(UV,2,0,1);
+
+	cvInvert(R,inverse,CV_LU);
+
+	//cvGEMM(intrinsic,UV,1,vc,0,UV);
+	cvGEMM(inverse,UV,1,NULL,0,UV);
+
+	double uvx,uvy,uvz;
+	uvx=cvmGet(UV,0,0);
+	uvy=cvmGet(UV,1,0);
+	uvz=cvmGet(UV,2,0);
+	s=uvz/(h-h0);
+
+	cvmSet(P,0,0,uvx/s);
+	cvmSet(P,1,0,uvy/s);
+	cvmSet(P,2,0,uvz/s);
+
+
+	cvReleaseMat(&inverse);
+
+	cvReleaseMat(&UV);
+
+}

@@ -1,0 +1,475 @@
+#include "iarc007/hy_target/Track.h"
+
+Robot_Sta_All robot_sta_all = { 0 };
+R_Watch r_watch = { 0 };
+long Frame_Count = 0;
+int Start_Flag = 0;
+int backproject_mode = 0;
+Mat Src_HSV, Src_Hue, mask, backproject, histimg, showimage, Hist_image;
+Mat srcimgdraw;
+
+const int histSize = HIST_HDIMS;
+float hranges_arr[2] = { 0, 180 };
+const float* ranges[1] = { hranges_arr };
+
+void R_Watch_Init(void)
+{
+	for (int i = 0; i < MAX_NUM; i++)
+	{
+		r_watch.R_Sta[i] = false;
+		r_watch.R_Ch2Disap[i] = false;
+		r_watch.R_Ch2Ap[i] = false;
+	}
+	r_watch.RC_Inc = false;
+	r_watch.RC_Red = false;
+}
+void CamShift_Init(void)
+{
+	R_Watch_Init();
+
+	Src_HSV.create(Size(IPL_WIDTH, IPL_HEIGHT), CV_8UC3);
+	Src_Hue.create(Size(IPL_WIDTH, IPL_HEIGHT), CV_8UC1);
+	mask.create(Size(IPL_WIDTH, IPL_HEIGHT), CV_8UC1);
+	backproject.create(Size(IPL_WIDTH, IPL_HEIGHT), CV_8UC1);
+	Hist_image.create(Size(400, 750), CV_8UC3);
+	showimage.create(Size(400, 80), CV_8UC3);
+	Src_HSV.setTo(0);
+	Src_Hue.setTo(0);
+	mask.setTo(0);
+	backproject.setTo(0);
+	Hist_image.setTo(0);
+	showimage.setTo(0);
+	for (int i = 0; i < MAX_NUM; i++)
+	{
+		robot_sta_all.robot_sta_single[i].robot_sta_now = ROBOT_NO;
+		robot_sta_all.robot_sta_single[i].robot_sta_pre = ROBOT_NO;
+		robot_sta_all.robot_sta_single[i].Once_Start = 0;
+		robot_sta_all.robot_sta_single[i].track_count = 0;
+		robot_sta_all.robot_sta_single[i].logo_num = i;
+		robot_sta_all.track[i] = i;
+		robot_sta_all.robot_sta_single[i].hist.bhattacharyya = 1.0;
+		robot_sta_all.robot_sta_single[i].hist.max_val = 0.;
+		robot_sta_all.robot_sta_single[i].hist_now = Mat::zeros(Size(1, HIST_HDIMS), CV_32FC1);
+		robot_sta_all.robot_sta_single[i].hist_pre = Mat::zeros(Size(1, HIST_HDIMS), CV_32FC1);
+		robot_sta_all.robot_sta_single[i].hist.hist = Mat::zeros(Size(1, HIST_HDIMS), CV_32FC1);
+		robot_sta_all.robot_sta_single[i].logo_num = 3;
+	}
+	robot_sta_all.target_count_now = 0;
+	histimg.create(cvSize(320, 200), CV_8UC3);
+	Start_Flag = 1;
+}
+void R_Sta_Reset(Robot_Sta_Single *robot)
+{
+	robot->Once_Start = 1;
+	robot->robot_sta_now = ROBOT_NO;
+	robot->robot_sta_pre = ROBOT_NO;
+	robot->track_count = 0;
+}
+void Robot_Message_Show(void)
+{
+	int offset = 7;
+	string buffer1;
+	char buffer[50] = "";
+	sprintf(buffer, "tracknumber: %d", robot_sta_all.tracknumber);
+	buffer1 = buffer;
+	putText(showimage, buffer1, { 0, 15 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+	if (robot_sta_all.tracknumber> -1 && robot_sta_all.tracknumber < 10)
+	{
+		switch (robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].robot_sta_now)
+		{
+		case ROBOT_NO:
+			sprintf(buffer, "sta_now: ROBOT_NO");
+			break;
+		case ROBOT_BARRIER:
+			sprintf(buffer, "sta_now: ROBOT_BARRIER");
+			break;
+		case ROBOT_GOT:
+			sprintf(buffer, "sta_now: ROBOT_GOT");
+			break;
+		default:
+			break;
+		}
+		putText(showimage, buffer, { 0, 30 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+
+		sprintf(buffer, "(%d, %d)", robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Now.x, robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Now.y);
+		putText(showimage, buffer, { 0, 45 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+		sprintf(buffer, "(w %d, h %d)", robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Now.width, robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Now.height);
+		putText(showimage, buffer, { 0, 60 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+
+		switch (robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].robot_sta_pre)
+		{
+		case ROBOT_NO:
+			sprintf(buffer, "sta_pre: ROBOT_NO");
+			break;
+		case ROBOT_BARRIER:
+			sprintf(buffer, "sta_pre: ROBOT_BARRIER");
+			break;
+		case ROBOT_GOT:
+			sprintf(buffer, "sta_pre: ROBOT_GOT");
+			break;
+		default:
+			break;
+		}
+		putText(showimage, buffer, { showimage.cols / 2 + offset, 30 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+
+		sprintf(buffer, "(%d, %d)", robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Pre.x, robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Pre.y);
+		putText(showimage, buffer, { showimage.cols / 2 + offset, 45 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+		sprintf(buffer, "(w %d, h %d)", robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Pre.width, robot_sta_all.robot_sta_single[robot_sta_all.tracknumber].Track_Pre.height);
+		putText(showimage, buffer, { showimage.cols / 2 + offset, 60 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+
+		//imshow("showimage", showimage);
+		//showimage.setTo(0);
+	}
+}
+void Hist_Up(Mat& hist1, Mat& hist2, float weight)
+{
+	float a1 = 0., a2 = 0.;
+	float Array[HIST_HDIMS] = { 0. };
+	for (int i = 0; i < HIST_HDIMS; i++)
+	{
+		a1 = hist1.at<float>(i);
+		a2 = hist2.at<float>(i);
+		Array[i] = a1*(1 - weight) + a2*weight;
+		hist1.at<float>(i) = Array[i];
+	}
+
+	normalize(hist1, hist1, 0., 1., NORM_MINMAX, -1, Mat());
+
+}
+void Hist_Get(Hist_Store *hist, Mat img)
+{
+	rectangle(img, hist->Rec.tl(), hist->Rec.br(), Scalar(255, 0, 0), 1, 8, 0);
+	cvtColor(img, img, CV_BGR2HSV);
+	inRange(img, Scalar(0, SMIN, MIN(VMIN, VMAX), 0), Scalar(180, 256, MAX(VMIN, VMAX), 0), mask);
+
+	vector<Mat>res;
+	split(img, res);	//get H-S-V
+	Src_Hue.copyTo(res[0]);
+
+	Mat hueroi(Src_Hue, hist->Rec);
+	Mat maskroi(mask, hist->Rec);
+
+	calcHist(&hueroi, 1, 0, maskroi, hist->hist, 1, &histSize, ranges, true, false);
+	normalize(hist->hist, hist->hist, 0., 1., NORM_MINMAX, -1, Mat());
+	minMaxLoc(hist->hist, 0, &hist->max_val);
+	//cvConvertScale((hist->hist)->bins, (hist->hist)->bins, hist->max_val ? 255. / hist->max_val : 0., 0);	//对直方图的数值转为0~255
+}
+void Num_Update(void)
+{
+	int tar = robot_sta_all.target_count_now, a = 0;
+	for (int i = 0; i <tar; i++)
+		R_Mes_Up(&robot_sta_all.robot_sta_single[i]);			//机器人信息已经储存
+	for (int i = 0; i < tar - a; i++)
+	{
+		if (r_watch.R_Ch2Disap[i])		//如果第i个位置目标消失了
+		{
+			cout << "target " << i << " disappear\n";
+			//waitKey(0);
+			//a++;
+			for (int j = i; j < tar - 1 - a; j++)
+			{
+				Robot_Sta_Copy(&robot_sta_all.robot_sta_single[j + 1], &robot_sta_all.robot_sta_single[j]);
+				//robot_sta_all.robot_sta_single[j].Track_Now = robot_sta_all.robot_sta_single[j + 1].Track_Now;
+				//robot_sta_all.robot_sta_single[j].Track_Pre = robot_sta_all.robot_sta_single[j + 1].Track_Pre;
+				r_watch.R_Sta[j] = r_watch.R_Sta[j + 1];
+				r_watch.R_Ch2Ap[j] = r_watch.R_Ch2Ap[j + 1];
+				r_watch.R_Ch2Disap[j] = r_watch.R_Ch2Disap[j + 1];
+			}
+			//R_Watch_Refresh();
+			R_Sta_Reset(&robot_sta_all.robot_sta_single[tar - a - 1]);
+			a++;
+			i = -1;
+		}
+	}
+	robot_sta_all.target_count_now = robot_sta_all.target_count_now - a;
+}
+void R_Mes_Up(Robot_Sta_Single *robot)
+{
+	robot->robot_sta_pre = robot->robot_sta_now;
+	robot->hist_pre.copyTo(robot->hist_now);
+	robot->Track_Pre = robot->Track_Now;
+	robot->Box2D_Pre = robot->Box2D_Now;
+	//swap(robot->hist_now, robot->hist_pre);
+}
+void Robot_Sta_Copy(Robot_Sta_Single *robot1, Robot_Sta_Single *robot2)
+{
+	/*
+	typedef struct Robot_Sta_Single
+	{
+	Robot_Find robot_sta_now;			//the status of the target in this frame
+	Robot_Find robot_sta_pre;			//the status of the target in last frame
+	Rect Track_Now;
+	Rect Track_Pre;
+	RotatedRect Box2D_Now;
+	RotatedRect Box2D_Pre;
+	MatND hist_now;						//the histogram of a target in this frame
+	MatND hist_pre;						//the histogram of a target in last frame
+	Hist_Store hist;					//save the message of the hist
+	int Once_Start;						//start a new trace-1
+	int logo_num;						//the number of the robot
+	int track_count;					//the nunber of the frames that we have been tracking now
+	}Robot_Sta_Single;						//all messages of a single target
+	*/
+	//1给2
+	robot2->robot_sta_now = robot1->robot_sta_now;
+	robot2->robot_sta_pre = robot1->robot_sta_pre;
+	robot2->Track_Now = robot1->Track_Now;
+	robot2->Track_Pre = robot1->Track_Pre;
+	robot2->Box2D_Now = robot1->Box2D_Now;
+	robot2->Box2D_Pre = robot1->Box2D_Pre;
+	robot1->hist_now.copyTo(robot2->hist_now);
+	robot1->hist_pre.copyTo(robot2->hist_pre);
+	robot2->hist.bhattacharyya = robot1->hist.bhattacharyya;
+	robot2->hist.max_val = robot1->hist.max_val;
+	robot2->hist.Rec = robot1->hist.Rec;
+	robot1->hist.hist.copyTo(robot2->hist.hist);
+	robot2->Once_Start = robot1->Once_Start;
+	robot2->logo_num = robot1->logo_num;
+	robot2->track_count = robot1->track_count;
+}
+void R_Watch_Refresh(void)
+{
+	for (int i = 0; i < MAX_NUM; i++)
+	{
+		bool flag1 = (robot_sta_all.robot_sta_single[i].robot_sta_now == ROBOT_GOT);
+		bool flag2 = (robot_sta_all.robot_sta_single[i].robot_sta_now == ROBOT_NO || robot_sta_all.robot_sta_single[i].robot_sta_now == ROBOT_BARRIER);
+		bool flag3 = (robot_sta_all.robot_sta_single[i].robot_sta_pre == ROBOT_GOT);
+		bool flag4 = (robot_sta_all.robot_sta_single[i].robot_sta_pre == ROBOT_NO || robot_sta_all.robot_sta_single[i].robot_sta_pre == ROBOT_BARRIER);
+
+		r_watch.R_Sta[i] = flag1;
+		r_watch.R_Ch2Disap[i] = flag2&&flag3;
+		r_watch.R_Ch2Ap[i] = flag1&&flag4;
+	}
+	bool flag1 = (robot_sta_all.target_count_now > robot_sta_all.target_count_pre);
+	bool flag2 = (robot_sta_all.target_count_now < robot_sta_all.target_count_pre);
+	bool flag3 = (robot_sta_all.target_count_now == robot_sta_all.target_count_pre);
+
+	r_watch.RC_Inc = flag1;
+	r_watch.RC_Red = flag2;
+}
+void Refresh(float height)
+{
+	for(int i = 0; i<robot_sta_all.target_count_now ;i++)
+	{
+		int flag = Tra_Filter(robot_sta_all.robot_sta_single[i].Box2D_Now, 5.7, height, MIN_POL_3_CSOFF_ROBUSTOFF, -10, MAX_EXP_4_CSOFF, 0);	//0的地方原来是20
+
+		int xx = (int)robot_sta_all.robot_sta_single[i].Box2D_Now.center.x;
+		int yy = (int)robot_sta_all.robot_sta_single[i].Box2D_Now.center.y;
+
+		int flag1 = Ell_Inside_Cal(ELL_CEN, ELL_A, ELL_B, Point(xx, yy));
+		if(flag == 0 || flag1 == 0)
+		{
+			robot_sta_all.robot_sta_single[i].Once_Start = 1;
+			robot_sta_all.robot_sta_single[i].robot_sta_now = ROBOT_NO;
+			robot_sta_all.robot_sta_single[i].robot_sta_pre = ROBOT_GOT;	//强行刷新
+			robot_sta_all.robot_sta_single[i].track_count = 0;
+		}
+	}
+	R_Watch_Refresh();
+	Num_Update();
+	for (int i = 0; i < robot_sta_all.target_count_now - 1; i++)		//判断重合
+	{
+		for (int j = i + 1; j < robot_sta_all.target_count_now; j++)
+		{
+			bool ff1 = robot_sta_all.robot_sta_single[i].robot_sta_now == ROBOT_NO;
+			bool ff2 = robot_sta_all.robot_sta_single[j].robot_sta_now == ROBOT_NO;
+			if(ff1 || ff2)
+				continue;
+			int a = 0; float b = 0.;
+			b = Re_Coin_Degree(robot_sta_all.robot_sta_single[i].Track_Now, robot_sta_all.robot_sta_single[j].Track_Now, &a);
+			a = (a == 1) ? i : j;
+			//cout << "b = " << b << "\n";
+			if (b > 0.4 )
+			{
+				//如果重合，就把a这个目标信息清理
+				robot_sta_all.robot_sta_single[a].Once_Start = 1;
+				robot_sta_all.robot_sta_single[a].robot_sta_now = ROBOT_NO;
+				robot_sta_all.robot_sta_single[a].robot_sta_pre = ROBOT_GOT;	//强行刷新
+				robot_sta_all.robot_sta_single[a].track_count = 0;
+			}
+		}
+	}
+	R_Watch_Refresh();
+	Num_Update();
+	robot_sta_all.target_count_pre = robot_sta_all.target_count_now;
+}
+void RoaRec_Long_Cal(RotatedRect res, vector<Point>&longcenter)
+{
+	double ess = 1e-1;
+	Point2f pt[4];
+	res.points(pt);	//得到四个点
+	long distance1 = pow((pt[0].x - pt[1].x), 2) + pow((pt[0].y - pt[1].y), 2);
+	long distance2 = pow((pt[1].x - pt[2].x), 2) + pow((pt[1].y - pt[2].y), 2);
+
+	if (distance1 > distance2 + ess)		//0,1
+	{
+		cout << "找到！" << endl;
+		longcenter.push_back(Point2f((pt[0].x + pt[1].x) / 2, (pt[0].y + pt[1].y) / 2));
+		longcenter.push_back(Point2f((pt[2].x + pt[3].x) / 2, (pt[2].y + pt[3].y) / 2));
+	}
+	else if (distance1 < distance2 - ess)	//1,2
+	{
+		cout << "找到！" << endl;
+		longcenter.push_back(Point2f((pt[1].x + pt[2].x) / 2, (pt[1].y + pt[2].y) / 2));
+		longcenter.push_back(Point2f((pt[0].x + pt[3].x) / 2, (pt[0].y + pt[3].y) / 2));
+	}
+	else
+	{
+		cout << "没找到！" << endl;
+		longcenter.push_back(Point2f(0., 0.));
+		longcenter.push_back(Point2f(0., 0.));
+	}
+}
+void RoaRec_Draw(Mat& img, RotatedRect res, vector<Point>longcenter)
+{
+	Point2f pt[4];
+	res.points(pt);	//得到四个点
+
+	circle(img, pt[0], 5, Scalar(255, 0, 0), -1);		//第0个 blue
+	circle(img, pt[1], 5, Scalar(0, 255, 0), -1);		//第1个 green
+	circle(img, pt[2], 5, Scalar(0, 0, 255), -1);		//第2个 red
+	circle(img, pt[3], 5, Scalar(0, 255, 255), -1);		//第2个 white
+
+	for (int i = 0; i < 4; i++)
+		line(img, pt[i], pt[(i + 1) % 4], Scalar(255, 255, 0), 2);
+
+	for (int i = 0; i < longcenter.size(); i++)
+		circle(img, longcenter[i], 5, Scalar(255, 255, 255), -1);
+}
+void Sig_Obj_Tra(Mat src, Robot_Sta_Single* rssig)
+{
+	if (rssig->robot_sta_now == ROBOT_NO)		//也许用不到
+	{
+		cout << "There is no target!\n";
+		rssig->robot_sta_pre = rssig->robot_sta_now;
+		rssig->robot_sta_now = ROBOT_NO;
+
+		rssig->Track_Now.x = -1;
+		rssig->Track_Now.y = -1;
+		rssig->Track_Now.width = 0;
+		rssig->Track_Now.height = 0;
+		putText(src, "No target", { src.cols - 80, 20 }, FONT_HERSHEY_COMPLEX, 0.5f, Scalar(255, 0, 0));
+		//waitKey(0);
+	}
+	else//这个编号是有目标的
+	{
+		if ((rssig->robot_sta_pre == ROBOT_NO || rssig->robot_sta_pre == ROBOT_BARRIER) && (rssig->robot_sta_now == ROBOT_GOT))
+			rssig->Once_Start = 1;
+		else;
+		cvtColor(src, Src_HSV, CV_BGR2HSV);
+		inRange(Src_HSV, Scalar(0, SMIN, MIN(VMIN, VMAX)), Scalar(180, 256, MAX(VMIN, VMAX)), mask);
+		//得到 mask ，只处理像素值为H：0~180，S：smin(30)~256，V：vmin(10)~vmax(256)之间的部分
+		vector<Mat>sp;
+		split(Src_HSV, sp);
+		Src_Hue = sp[0];
+		if (rssig->Once_Start == 1)//get the initial rectangle, a new track
+		{
+			cout << "Start a new tracking\n";
+			rssig->Once_Start = 0;
+		}
+
+		double max_val = 0.f;
+
+		Mat hueroii = Src_Hue(rssig->Track_Now);
+		Mat maskroii = mask(rssig->Track_Now);
+
+		calcHist(&hueroii, 1, 0, maskroii, rssig->hist_now, 1, &histSize, ranges, true, false);
+		normalize(rssig->hist_now, rssig->hist_now, 0., 1., NORM_MINMAX, -1, Mat());
+		minMaxLoc(rssig->hist_now, 0, &(rssig->hist.max_val), 0, 0);
+
+		calcBackProject(&Src_Hue, 1, 0, rssig->hist_now, backproject, ranges);
+		multiply(backproject, mask, backproject);
+		//dilate(backproject, backproject, Mat(), Point(-1, -1), 1);
+		dilate(backproject, backproject, Mat(), Point(-1, -1), 2);
+		//for (int i = 0; i < backproject.cols - 1; i++)
+		//for (int j = 0; j < backproject.rows - 1; j++)
+		//{
+		//	uchar ptr1 = backproject.at<uchar>(i, j);
+		//	//uchar ptr2 = mask.at<uchar>(i, j);
+		//	if (ptr1 != 0)
+		//		backproject.at<uchar>(i, j) = 255;
+		//	//if (ptr2 == 0)
+		//		//backproject.at<uchar>(i, j) = 0;
+		//}
+		//imshow("Backproject_mode", backproject);
+		//imshow("mask", mask);
+		//waitKey(0);
+		rssig->Box2D_Now = CamShift(backproject, rssig->Track_Now, cvTermCriteria(CV_TERMCRIT_EPS | CV_TERMCRIT_ITER, 10, 1));
+
+		if (rssig->Track_Now.height < 10 || rssig->Track_Now.width < 10)	//如果目标本身过小，说明没有跟上
+		{
+			cout << "Too small! We lose our target!\n";
+			rssig->robot_sta_now = ROBOT_NO;
+		}
+	}
+	int tempx = (rssig->Track_Now.br().x + rssig->Track_Now.tl().x) / 2;
+	int tempy = (rssig->Track_Now.br().y + rssig->Track_Now.tl().y) / 2;
+	char buffer1[10] = "";
+	Letter_Show(buffer1, { tempx, tempy }, src);
+}
+void Sig_Match(Robot_Sta_Single* rssig)
+{
+	Mat hueroi = Src_Hue(rssig->Track_Now);
+	Mat maskroi = mask(rssig->Track_Now);
+
+	calcHist(&hueroi, 1, 0, maskroi, rssig->hist_now, 1, &histSize, ranges, true, false);
+	normalize(rssig->hist_now, rssig->hist_now, 0., 1., NORM_MINMAX, -1, Mat());
+	minMaxLoc(rssig->hist.hist, 0, &(rssig->hist.max_val));
+
+	if (rssig->track_count == 0)	//如果是第一帧跟踪
+		rssig->hist_now.copyTo(rssig->hist.hist);
+
+	if (rssig->robot_sta_now == ROBOT_GOT)
+		rssig->hist.bhattacharyya = compareHist(rssig->hist.hist, rssig->hist_now, CV_COMP_BHATTACHARYYA);
+	else if (rssig->robot_sta_now == ROBOT_NO)
+		rssig->hist.bhattacharyya = 2.0;
+	else;
+
+	float Ths_Bha = 0.;
+	Ths_Bha = COM_Bhattacharyya + (1 - COM_Bhattacharyya)*exp(-(0.5*(double)rssig->track_count));
+	//1~COM_Bhattacharyya
+	if (rssig->hist.bhattacharyya <= Ths_Bha)
+	{
+		Hist_Up(rssig->hist.hist, rssig->hist_now, rssig->hist.bhattacharyya);
+		//rectangle(src, rssig->Track_Now.tl(), rssig->Track_Now.br(), Scalar(255, 255, 255), 2, 8, 0);
+		vector<Point>longcenter;
+		RoaRec_Long_Cal(rssig->Box2D_Now, longcenter);
+		RoaRec_Draw(srcimgdraw, rssig->Box2D_Now, longcenter);
+		rssig->track_count++;			//跟踪帧数加一
+	}
+	else
+	{
+		cout << "Do not match! We lose our target!  Bhattacharyya\n";
+		rssig->robot_sta_now = ROBOT_NO;
+		rssig->robot_sta_pre = ROBOT_GOT;
+		rssig->Once_Start = 1;
+		rssig->track_count = 0;
+//		while(1)
+//		{
+//			cout <<"fuck!!!"<<endl;
+//		}
+	}
+
+}
+void All_Obj_Tra(Mat img)
+{
+	for (int i = 0; i < robot_sta_all.target_count_now; i++)
+	{
+		if (robot_sta_all.robot_sta_single[i].logo_num == 0)
+		{
+			Sig_Obj_Tra(img, &robot_sta_all.robot_sta_single[i]);
+			Sig_Match(&robot_sta_all.robot_sta_single[i]);
+		}
+		else
+		{
+			cout << "Do not match! We lose our target!\n";
+			robot_sta_all.robot_sta_single[i].robot_sta_now = ROBOT_NO;
+			robot_sta_all.robot_sta_single[i].robot_sta_pre = ROBOT_GOT;
+			robot_sta_all.robot_sta_single[i].Once_Start = 1;
+			robot_sta_all.robot_sta_single[i].track_count = 0;
+			robot_sta_all.target_count_now--;
+			if (robot_sta_all.target_count_now <= 0)
+				robot_sta_all.target_count_now = 0;
+		}
+	}
+}

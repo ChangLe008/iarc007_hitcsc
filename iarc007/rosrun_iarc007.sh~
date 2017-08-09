@@ -1,0 +1,5 @@
+#! /bin/sh
+
+source ~/.bashrc
+cd ~/catkin_ws
+echo "aaaa" >> log.txt

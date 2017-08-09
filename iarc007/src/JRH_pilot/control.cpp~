@@ -1,0 +1,2416 @@
+#include <opencv/cv.h>
+#include <opencv2/core/core.hpp>
+#include <ros/ros.h>
+#include <std_msgs/Float64.h>
+#include <stdio.h>
+#include <dji_sdk/dji_drone.h>
+#include <cstdlib>
+#include <actionlib/client/simple_action_client.h>
+#include <actionlib/client/terminal_state.h>
+#include <dynamic_reconfigure/server.h>
+#include <iarc007/iarc007Config.h>
+#include <sys/time.h>
+#include <iarc007/jrh_pilot/control.h>
+#include <iarc007/jrh_pilot/subscribe.h>
+#include <iarc007/object.h>
+#include <math.h>
+
+#include <iostream>
+#include <geometry_msgs/Twist.h>//position
+#include <sensor_msgs/LaserScan.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/Vector3Stamped.h>
+#include <geometry_msgs/Point.h>
+#include <opencv/highgui.h>
+#include <std_msgs/Float32.h>
+#include <memory.h>
+#include <opencv/cxcore.h>
+#include <opencv/cvaux.h>
+#include <opencv/cv.h>
+#include <sensor_msgs/Range.h>
+
+#include <iarc007/vehicle_pos.h>
+#include <iarc007/obstacle.h>
+
+
+//有好多变量需要注意在某些地方需要归零，这样才能进行第二次的交互！！！！！！！！！！！！！！！！！！ToDo
+double tic(){
+	struct timeval t;
+	gettimeofday(&t,NULL);
+	return ((double)t.tv_sec + ((double)t.tv_usec)/1000000.);
+}
+
+struct stuff
+{
+        int operate_num1;
+        int operate_num2;
+        float time;
+        float out_sita_target;
+};
+float transform_angle(int flag_select,float sita_target)
+{
+/*%transform_angle 根据model_select返回的flag_select值和原有的目标速度方向计算新的目标速度方向
+% flag_select model_select返回值
+% sita_target 目标速度方向*/
+	float pi = 3.14;
+	if(flag_select==0)
+	{
+		sita_target=sita_target+0;
+	}
+	else if(flag_select==1)
+	{
+		sita_target=sita_target+pi/4;
+	}
+	else if(flag_select==2)
+	{
+		sita_target=sita_target+pi;
+	}
+
+
+	//%sita_target转换到-pi到+pi
+	while(sita_target>pi)
+	{
+		sita_target=sita_target-2*pi;
+	}
+	while(sita_target<-pi)
+	{
+		sita_target=sita_target+2*pi;
+	}
+	return sita_target;
+}
+
+int local_model_select(float sita_target,int flag_location)
+{
+/*%已知一个目标局部位置坐标，速度方向，判断飞机应对其进行哪种操作，即不操作/转45/转180
+% sita_target 目标速度方向
+%flag_location 1表示飞机看到左边界（相当于global_model_select中的1区）
+%              2表示飞机没有看到左/右边界（相当于global_model_select中的2区）
+%              3表示飞机看到右边界（相当于global_model_select中的3区）
+%flag_select 0不操作 1转45 2转180
+
+%sita_target转换到-pi到+pi*/
+		float pi = 3.14;
+		int flag_select;
+
+		//%sita_target转换到-pi到+pi
+		while(sita_target>pi)
+		{
+			sita_target=sita_target-2*pi;
+		}
+		while(sita_target<-pi)
+		{
+			sita_target=sita_target+2*pi;
+		}
+
+     if(flag_location==1)//%相当于1区
+     {
+         if(((sita_target>=-pi)&&(sita_target<-pi/2))||(sita_target==pi))
+         {
+        	 flag_select=1;
+         }
+         else if((sita_target>=-pi/2)&&(sita_target<0))
+         {
+        	 flag_select=0;
+         }
+         else if((sita_target>=0)&&(sita_target<=pi/4))
+         {
+        	 flag_select=1;
+         }
+         else if((sita_target>pi/4)&&(sita_target<pi))
+         {
+        	 flag_select=2;
+         }
+     }
+
+     else if(flag_location==2)//%相当于2区
+     {
+         if(((sita_target>=-pi)&&(sita_target<-pi*5/8))||(sita_target==pi))
+         {
+        	 flag_select=1;
+         }
+         else if((sita_target>=-pi*5/8)&&(sita_target<0))
+         {
+        	 flag_select=0;
+         }
+         else if((sita_target>=0)&&(sita_target<=pi*7/8))
+         {
+        	 flag_select=2;
+         }
+         else if((sita_target>pi*7/8)&&(sita_target<pi))
+         {
+        	 flag_select=1;
+         }
+     }
+
+     else if(flag_location==3)//%相当于3区
+     {
+         if((sita_target>=-pi)&&(sita_target<=-pi*3/4))
+         {
+        	 flag_select=1;
+         }
+         else if((sita_target>-pi*3/4)&&(sita_target<=-pi/2))
+         {
+        	 flag_select=0;
+         }
+         else if((sita_target>-pi/2)&&(sita_target<=pi/2))
+         {
+        	 flag_select=2;
+         }
+         else if(((sita_target>pi/2)&&(sita_target<=pi))||(sita_target==-pi))
+         {
+        	 flag_select=1;
+         }
+      }
+     return flag_select;
+}
+
+struct stuff local_multitarget_select_step1(float x_target,float y_target,float sita_target,int flag_location,float t1_rotate,float t2_rotate)
+{
+/*%已知一个目标速度方向，计算将其驱赶出绿边过程中
+%初始阶段所需操作次数、时间、操作后的速度方向
+% x_target,y_target目标在局部坐标中的位置
+% sita_target 目标速度方向
+% t1_operate t2_operate从飞机作出判断到飞机完成操作1、2需要的时间
+% t1_rotate t2_rotate 目标进行动作1、2原地旋转需要的时间
+% operate_num1 operate_num2 飞机进行操作1、2各自的次数
+% time 时间*/
+struct stuff standard1;
+standard1.operate_num1=0;
+standard1.operate_num2=0;
+standard1.time=0;
+standard1.out_sita_target=0;
+float a=1;//%飞机交互时减速的加速度
+float vt=0.33;//%目标速度
+float t1_operate,t2_operate;//% t1_operate t2_operate从飞机作出判断到飞机完成操作1、2需要的时间
+
+float pi = 3.14;
+int flag_select=0;
+float sita1,sita2;
+
+//%sita_target转换到-pi到+pi
+	while(sita_target>pi)
+	{
+		sita_target=sita_target-2*pi;
+	}
+	while(sita_target<-pi)
+	{
+		sita_target=sita_target+2*pi;
+	}
+
+t1_operate=sqrt(2*sqrt(x_target*x_target+y_target*y_target)/a);
+t2_operate=sqrt(2*sqrt(x_target*x_target+y_target*y_target)/a);
+flag_select=1;
+    while(flag_select!=0)
+    {
+        flag_select=local_model_select(sita_target,flag_location);//%判断飞机应进行哪种操作
+        if(flag_select==1)
+        {
+        	 standard1.time=standard1.time+t1_operate+t1_rotate;
+        	 standard1.operate_num1=standard1.operate_num1+1;//%记录操作1的次数
+        }
+        else if(flag_select==2)
+        {
+            standard1.time=standard1.time+t2_operate+t2_rotate;
+            standard1.operate_num2=standard1.operate_num2+1;//%记录操作2的次数
+        }
+        sita_target=transform_angle(flag_select,sita_target);//%操作后目标速度方向
+        standard1.out_sita_target=sita_target;
+    }
+    return standard1;
+}
+
+int local_multitarget_select_step2(int n,float x_target[],float y_target[],float sita_target[],int flag_location,float t1_rotate,float t2_rotate)
+{
+/*% 已知n个目标的局部位置坐标，速度方向，判断最易驱赶的目标
+% n 目标个数
+% x_target,y_target目标局部位置坐标
+% sita_target 目标速度方向*/
+int i,j;
+float pi=3.14;
+stuff standard2[10];
+for (i=0;i<n;i++)
+{
+	standard2[i]= local_multitarget_select_step1(x_target[i],y_target[i],sita_target[i],flag_location,t1_rotate,t2_rotate);
+}
+
+float min_time=standard2[0].time;
+int min_operate_num1=standard2[0].operate_num1;
+int min_operate_num2=standard2[0].operate_num2;
+float min_out_sita_target=fabs(-pi/2-standard2[0].out_sita_target);
+int flag_multitarget_select=0;
+
+for (j=1;j<n;j++)
+{
+    if(fabs(-pi/2-standard2[j].out_sita_target)<min_out_sita_target)
+    {
+        min_out_sita_target=fabs(-pi/2-standard2[j].out_sita_target);
+        flag_multitarget_select=j;
+    }
+    else if(fabs(-pi/2-standard2[j].out_sita_target)==min_out_sita_target)
+    {
+    	 if(standard2[j].time<min_time)
+    	 {
+    	        min_time=standard2[j].time;
+    	        flag_multitarget_select=j;
+    	 }
+    	  else if(standard2[j].time==min_time)
+    	  {
+    	            if(standard2[j].operate_num2<min_operate_num2)
+    	            {
+    	                min_operate_num2=standard2[j].operate_num2;
+    	                flag_multitarget_select=j;
+    	            }
+    	            else if(standard2[j].operate_num2==min_operate_num2)
+    	            {
+    	                if(standard2[j].operate_num1<=min_operate_num1)
+    	                {
+    	                    flag_multitarget_select=j;
+    	                }
+    	            }
+    	  }
+    }
+}
+return flag_multitarget_select;
+}
+
+
+int model_switch(int n,float x_target[],float y_target[],float sita_target[],int flag_location,float t1_rotate,float t2_rotate)
+{
+	/*已知当前视野内地面机器人数目，判断飞机赢采取何种模式
+	 0跟随不操作 1转45度 2转180度 3巡航*/
+	int model,a;
+	float sita;
+	if(n==0)
+	{
+		model=3;
+	}
+	else if(n==1)
+	{
+		/******************************************
+		sita=sita_target[0];
+		model=local_model_select(sita,flag_location);
+		******************************************/
+		model=1;
+	}
+	else
+	{
+		/********************************************************************************
+		a=local_multitarget_select_step2(n,x_target,y_target,sita_target,flag_location,t1_rotate,t2_rotate);
+		//printf("a=%d",a);
+		sita=sita_target[a];
+		model=local_model_select(sita,flag_location);
+		**********************************************************************************/
+		model=1;
+	}
+	return model;
+}
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////
+float iRobot_x=0.0f,iRobot_y=0.0f,iRobot_theta=0.0f,r_vt=0.0f,r0=0.0f,r_vt_original=0.0f;//TODO
+float wx_iRobot_x[10];
+float wx_iRobot_y[10];
+float wx_iRobot_theta[10];
+unsigned int wx_iRobot_num=0;
+unsigned int iRobot_num=0;
+float F_parallel=0,F_point=0,theta_point=0;
+bool first_interaction_45=true;//ToDo %注意以后对于bool变量需要在某些地方变回来
+float pos_now[3]={0,0,0};
+int jishu=0,cishu=0;
+float height_H=0.0f;//计算高度最高的指令
+float height_L=0.0f;//计算高度最低的指令
+float remember_theta;
+double remember_time;
+///////////////////////////////////////////PID 按照x，y，yaw,height的顺序 一定要注意以后要将积分项归零在合适的位置
+float a=1.194,b=0.01,c=0.02;                   // a=1.194     0.8
+float kp[4]={a,a,0.4,0.4};//kp[4]={a,a,0.4,0.8}
+float ki[4]={b,b,0.0,0.01};
+float kd[4]={c,c,0.01,0.02};
+float kp_obstacle=0.5f;;//PID按照x、y顺序避障
+float ki_obstacle=0.0f;
+float kd_obstacle=0.0f;
+float error_obstacle[8]={0.0f};
+float last_error_obstacle[8]={0.0f};
+float interaction_obstacle_x[8]={-80};
+float interaction_obstacle_y[8]={-80};
+float comd_obstacle_p[8]={0.0f};
+float comd_obstacle_i[8]={0.0f};
+float comd_obstacle_d[8]={0.0f};
+float distance_obstacle;
+float error[4]={0.0f,0.0f,0.0f,0.0f},last_error[4]={0.0f,0.0f,0.0f,0.0f},dt;
+double time_now=0,last_time=0.0f;
+///////////////////////////////////////////用来发布指令
+float comd_angle_x;
+float comd_angle_y;
+float comd_yaw_rate;
+float comd_height;
+float comd_height_v;
+float comd_p[4]={0.0f,0.0f,0.0f,0.0f};//用来记录kp指令的大小x y yaw height
+float comd_i[4]={0.0f,0.0f,0.0f,0.0f};
+float comd_d[4]={0.0f,0.0f,0.0f,0.0f};
+bool land=false;
+bool take_off=false;
+bool PID_control_of_xy=false;
+bool first_land=true;
+float take_off_height=1.0;
+bool first_take_off=true;
+float acc_total;
+float acc_land_to_take_off=1;//起飞的加速度大小触发开关//TODO
+double first_land_time;
+
+
+
+
+///////////////////////////////////////////
+CvMat *q_right_now=cvCreateMat(4,1,CV_32FC1);
+CvMat *att_right_now=cvCreateMat(3,1,CV_32FC1);
+
+#define PI 3.14159265358
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////180度交互参数设计
+int model_choose=2;     //【0】跟随  【1】 45度交互 【2】180度交互
+bool no_land=false;
+
+
+
+
+float cruise_velcity_total=0.5;
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////巡航
+int cruise=1;
+int cruise_obstacle_x[8]={-80};
+int cruise_obstacle_y[8]={-80};
+int cruise_obstacle_appear_zy=0;//障碍物出现的标志
+int cruise_obstacle_appear_yqt=0;
+int cruise_target_x=0;//巡航点 注意坐标系
+int cruise_target_y=0;
+int obstacle_amount_zy=0;
+int obstacle_amount_yqt=0;
+int obstacel_amount_total=0;
+int open_list_x[1600]={-80};
+int open_list_y[1600]={-80};
+int close_list_x[169]={-80};
+int close_list_y[169]={-80};
+int parent_list_x[169][169]={-80};
+int parent_list_y[169][169]={-80};
+int open_list_x2[1600]={-80};
+int open_list_y2[1600]={-80};
+bool find_cruise=false;//判断是否找到一条路径
+int F_power[1600]={1294};
+int G_power[1600]={1294};
+int open_list_num=0;
+int close_list_num=0;
+int F_power_min;
+
+int num_F_power_min;
+int in_open_list[1600]={0};
+int num_in_open_list;
+int remember_parent_x;
+int remember_parent_x_comd;
+int remember_parent_y;
+int remember_parent_y_comd;
+float cruise_to_target_x;
+float cruise_to_target_y;
+float race_pos_x;
+float race_pos_y;
+
+
+
+float cruise_height_kp=0.8;
+float cruise_height_ki=0.0;
+float cruise_height_kd=0.0;
+float cruise_comd_height_P=0;
+float cruise_comd_height_I=0;
+float cruise_comd_height_D=0;
+bool first_cruise=true;
+float cruise_error_height;
+float cruise_last_error_height;
+float race_comd_height=1.5;//巡航高度
+int warning_num=0;
+bool emerge=false;
+float initial_pos_x=2;
+float initial_pos_y=0;
+float cruise_comd_vx;
+float cruise_comd_vy;
+float cruise_comd_vz;
+float race_comd_vx;
+float race_comd_vy;
+float race_comd_vz;
+float guidance_initial_x=0;
+float guidance_initial_y=0;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+int flag_location;
+int jrh_model;
+float t1_rotate=1.0;
+float t2_rotate=4.0;
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*王宁远巡航变量定义（包含目标点，障碍物，飞行器）*/
+float wny_x_t=0.0;		// target
+float wny_y_t=0.0;
+float wny_x_o=0.0;		// obstacle
+float wny_y_o=0.0;
+float wny_x_q=0.0;		// quadrotor
+float wny_y_q=0.0;
+float wny_v_tx=0.0;		// target_velocity 
+float wny_v_ty=0.0;
+float wny_v_ax=0.0;		// avoid_velocity
+float wny_v_ay=0.0;
+float wny_v_gx=0.0;		// guidance_velocity
+float wny_v_gy=0.0;
+float wny_v_x=0.0;		// complex_velocity
+float wny_v_y=0.0;
+float wny_k_target=1.0;		// proportionality of target
+float wny_x_qt=0.0;
+float wny_y_qt=0.0;
+float wny_target_distance=0.0;
+float wny_r_obstacle=0.25;	// radius of obstacle itself
+float wny_R_obstacle=0.12;	// radius of obstacle area
+float wny_k_o=0.0;		// proportionality of obstacle itself
+float wny_L_o=0.0;		// proportionality of obstacle area
+float wny_U=0.8;
+float wny_T=0.2;
+float wny_a=0.0;
+float wny_b=0.0;
+float wny_x_wait=0.0;
+float wny_y_wait=0.0;
+float wny_k_obstacle=0.0;	// proportionality of obstacle
+float wny_x_qo=0.0;
+float wny_y_qo=0.0;
+float wny_obstacle_distance=0.0;
+float wny_k_guidance=0.7;	// proportionality of guidance
+int wny_count=0;
+int wny_num=0;
+float wny_number=0.0;
+float wny_vx_limitation=1.0;
+float wny_vy_limitation=1.0;
+float wny_px,wny_py,wny_pz;
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*王宁远巡航回调函数定义（飞行器定位，障碍物定位）*/
+void vehicle_pos_callback(const iarc007::vehicle_pos& wny)
+{
+	CvMat* pos_mat = cvCreateMat(3,3,CV_32FC1);
+	cvmSet(pos_mat, 0, 0, wny.pos.x);
+	cvmSet(pos_mat, 1, 0, wny.pos.y);
+	cvmSet(pos_mat, 2, 0, wny.pos.z);
+	//printf("wny.pos.x====%f\n",wny.pos.x);
+	//printf("wny.pos.y====%f\n",wny.pos.y);	
+	//cvGEMM(R_g_b,pos_mat,1,NULL,0,pos_mat);
+	wny_px = cvmGet(pos_mat, 0, 0);
+	wny_py = cvmGet(pos_mat, 1, 0);
+	wny_pz = cvmGet(pos_mat, 2, 0);
+	cvReleaseMat(&pos_mat);
+}
+void yqt_obstacle(const iarc007::obstacle& wny)
+{
+	obstacle.num=wny.num;
+	//printf("obstacle.num====%d\n",obstacle.num);
+	//wny.obstacle_x.resize(wny.num);
+	//wny.obstacle_y.resize(wny.num);
+	for(int wny_p=0;wny_p<wny.num;wny_p++)
+	{
+		obstacle.x[wny_p]=wny.obstacle_x[wny_p];
+		obstacle.y[wny_p]=wny.obstacle_y[wny_p];
+		//printf("obstacle(%d)_x===%f\n",wny_p,obstacle.x[wny_p]);
+		//printf("obstacle(%d)_y===%f\n",wny_p,obstacle.y[wny_p]);
+	}
+	obstacle.flag=wny.biaozhiwei[0];
+	//printf("obstacle.flag===%d\n",obstacle.flag);
+}
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+FILE *comd_setpoint=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/comd_setpoint.txt","w");
+FILE *comd_setpoint_limited=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/comd_setpoint_limited.txt","w");
+FILE *comd_setpoint_block=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/comd_setpoint_block.txt","w");
+FILE *error_txt=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/error.txt","w");
+FILE *parent_list_txt=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/parent_list.txt","w");
+FILE *obstacle_pos_txt=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/obstacle.txt","w");
+FILE *obstacle_comd_txt=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/obstacle_comd.txt","w");
+FILE *global_race_txt=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/global_race.txt","w");
+FILE *model_txt=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/model.txt","w");
+void dynamic_callback(iarc007::iarc007Config &config, uint32_t level) {
+	kp[0]=config.double_kp_1;kp[1]=config.double_kp_2;kp[2]=config.double_kp_3;kp[3]=config.double_kp_4;
+	ki[0]=config.double_ki_1;ki[1]=config.double_ki_2;ki[2]=config.double_ki_3;ki[3]=config.double_ki_4;
+	kd[0]=config.double_kd_1;kd[1]=config.double_kd_2;kd[2]=config.double_kd_3;kd[3]=config.double_kd_4;
+
+	ROS_INFO("Reconfigure Request: kp_1=%f ki_1=%f kd_1=%f\n",
+		kp[0],ki[0],kd[0]);
+	ROS_INFO("Reconfigure Request: kp_2=%f ki_2=%f kd_2=%f\n",
+		kp[1],ki[1],kd[1]);
+	ROS_INFO("Reconfigure Request: kp_3=%f ki_3=%f kd_3=%f\n",
+		kp[2],ki[2],kd[2]);
+	ROS_INFO("Reconfigure Request: kp_4=%f ki_4=%f kd_4=%f\n",
+		kp[3],ki[3],kd[3]);
+}
+
+
+
+
+
+
+
+void control()
+{
+    ros::NodeHandle nh;
+    DJIDrone* drone = new DJIDrone(nh);
+    JRHDrone* jrh_drone=new JRHDrone(nh);
+
+    jrh_drone->ultrasonic.ranges.resize(5);
+    ros::Rate rate(50);
+    jrh_drone->object_pos_dynamic.target_x.resize(20);
+    jrh_drone->object_pos_dynamic.target_y.resize(20);
+    jrh_drone->object_pos_dynamic.target_dir.resize(20);
+
+	dynamic_reconfigure::Server<iarc007::iarc007Config> server;
+	dynamic_reconfigure::Server<iarc007::iarc007Config>::CallbackType f;
+	f = boost::bind(&dynamic_callback, _1, _2);
+	server.setCallback(f);
+
+while(ros::ok())
+{
+	ros::spinOnce();
+	while((abs(drone->rc_channels.mode+8000.0)<1)||abs(drone->rc_channels.mode)<1)
+	{
+		ros::spinOnce();
+		drone-> release_sdk_permission_control();
+		ROS_INFO("obtain  error !!! %f",drone->rc_channels.mode);
+		usleep(5000);
+		first_interaction_45=true;
+		first_take_off=true;
+		land=false;
+		take_off=false;
+		first_cruise=true;
+	}
+
+if(abs(drone->rc_channels.mode-8000.0)<1)
+{
+	if(drone->rc_channels.gear==(-4545))
+	{
+		usleep(100);	
+		drone->request_sdk_permission_control();
+	}
+	//////////////////////////////////////////////////////////////////////////
+
+	flag_location=2;
+	wx_iRobot_num=jrh_drone->object_pos_dynamic.target_num;
+
+
+for(int i=0;i<wx_iRobot_num;i++)
+{
+	wx_iRobot_x[i]=(jrh_drone->object_pos_dynamic.target_x[i])*0.01;
+	wx_iRobot_y[i]=(jrh_drone->object_pos_dynamic.target_y[i])*0.01;
+	wx_iRobot_theta[i]=jrh_drone->object_pos_dynamic.target_dir[i];
+}
+
+if(land==false && take_off==false)
+{
+	//printf("wxwx    %d  %f   %f  %f\n",wx_iRobot_num,wx_iRobot_x[0],wx_iRobot_y[0],wx_iRobot_theta[0]);
+	jrh_model=model_switch(wx_iRobot_num,wx_iRobot_x,wx_iRobot_y,wx_iRobot_theta,flag_location, t1_rotate, t2_rotate);
+	model_choose=jrh_model;
+}
+
+if(take_off==true)
+{
+	jrh_model=model_switch(wx_iRobot_num,wx_iRobot_x,wx_iRobot_y,wx_iRobot_theta,flag_location, t1_rotate, t2_rotate);
+	model_choose=jrh_model;
+	if((jrh_drone->ultrasonic.ranges[0]<take_off_height-0.3))
+	{
+		if(model_choose==3)
+		{
+			model_choose=88;
+		}
+	}
+	else
+	{
+		take_off=false;
+	}
+}
+
+//model_choose=2;
+printf("*******************model_choose     %d   %d***********\n",model_choose,land);
+fprintf(model_txt,"*********************  time  %f  ****************************\n",tic());
+fprintf(model_txt,"model_choose     %d   %d\n",model_choose,land);
+//printf("***height  %d  yaw_now  %d",);
+iRobot_x=(jrh_drone->object_pos_dynamic.target_x[0])*0.01;
+	iRobot_y=(jrh_drone->object_pos_dynamic.target_y[0])*0.01;
+	iRobot_theta=jrh_drone->object_pos_dynamic.target_dir[0];
+	iRobot_num=jrh_drone->object_pos_dynamic.target_num;
+	printf("iRobot_num  %d--- wx_iRobot_num  %d\n",iRobot_num,wx_iRobot_num);
+	fprintf(model_txt,"iRobot_num  %d--- wx_iRobot_num  %d\n",iRobot_num,wx_iRobot_num);
+	//TODO
+
+	//printf("p %f I %f D %f\n",kp[0],ki[0],kd[0]);
+	//printf("p %f I %f D %f\n",kp[1],ki[1],kd[1]);
+	//printf("p %f I %f D %f\n",kp[2],ki[2],kd[2]);
+	//printf("p %f I %f D %f\n",kp[3],ki[3],kd[3]);
+	//printf("iRobot_num  %u\n",iRobot_num);
+	//printf("%f  %f  %f  %f\n",jrh_drone->attitude_quaternion.q0,jrh_drone->attitude_quaternion.q1,jrh_drone->attitude_quaternion.q2,jrh_drone->attitude_quaternion.q3);
+
+	//////////////////////////////////////////////////////////////////////////
+//TODO
+
+	//cruise_obstacle_appear_zy=jrh_drone->obstacle_pos_dynamic.num;//从张雨订阅是否看见障碍物
+	//cruise_obstacle_appear_yqt=0;//从于庆涛订阅是否看见障碍物
+	obstacle_amount_zy=jrh_drone->obstacle_pos_dynamic.num;//从张雨订阅一共看到几个机器人
+	obstacle_amount_yqt=jrh_drone->obstacle_pos_dynamic_yqt.num;//从于庆涛订阅一共看到几个机器人
+	obstacel_amount_total=obstacle_amount_zy+obstacle_amount_yqt;
+	//得到所有障碍物信息，如果没有障碍物信息则返回-80信息
+
+	float global_pos_x=(-guidance_initial_x+jrh_drone->guidance_pos.vector.x)*cvmGet(R_init,0,0)+(-guidance_initial_y+jrh_drone->guidance_pos.vector.y)*cvmGet(R_init,1,0)-jrh_drone->ultrasonic.ranges[0]*cvmGet(R_init,2,0);
+	float global_pos_y=(-guidance_initial_x+jrh_drone->guidance_pos.vector.x)*cvmGet(R_init,0,1)+(-guidance_initial_y+jrh_drone->guidance_pos.vector.y)*cvmGet(R_init,1,1)-jrh_drone->ultrasonic.ranges[0]*cvmGet(R_init,2,1);
+	int int_pos_x=cvRound(global_pos_x+initial_pos_x);
+	int int_pos_y=cvRound(global_pos_y+initial_pos_y);
+
+//初始化位置
+//printf("pos_x  %d  pos_y  %d pos_z  %f\n",int_pos_x,int_pos_y,jrh_drone->ultrasonic.ranges[0]);
+	if((obstacel_amount_total)>0)
+	{
+		for(int i=0;i<obstacle_amount_zy;i++)//从张雨那里拿到障碍物位置信息
+		{
+			//cruise_obstacle_x[i]=1-int_pos_x+6;
+			//cruise_obstacle_y[i]=2-int_pos_y+6;
+			interaction_obstacle_x[i]=jrh_drone->obstacle_pos_dynamic.obstacle_x[i];
+			interaction_obstacle_y[i]=jrh_drone->obstacle_pos_dynamic.obstacle_y[i];
+			fprintf(obstacle_pos_txt,"time  %f  total_num %d num %d obstacle_x %f  obstacle_y %f\n",tic(),obstacel_amount_total,i+1,interaction_obstacle_x[i],interaction_obstacle_y[i]);
+			printf("obsatcle_total%d--num %d--obsatcle_r_vt %f -- obstacle_x %f--obstacle_y %f\n",obstacel_amount_total,i+1,sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i]),interaction_obstacle_x[i],interaction_obstacle_y[i]);
+			fprintf(model_txt,"obsatcle_total%d num %d --obsatcle_r_vt %f -- obstacle_x %f -- obstacle_y %f\n",obstacel_amount_total,i+1,sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i]),interaction_obstacle_x[i],interaction_obstacle_y[i]);
+			//printf(" obstacle_x %f  obstacle_y %f \n",interaction_obstacle_x[i],interaction_obstacle_y[i]);
+		}
+		for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)////从于庆涛那里拿到障碍物位置信息
+		{
+			//cruise_obstacle_x[i]=0;//注意信息取整 注意坐标系
+			//cruise_obstacle_y[i]=0;//注意信息取整 注意坐标系
+			interaction_obstacle_x[i]=jrh_drone->obstacle_pos_dynamic_yqt.obstacle_x[i];
+			interaction_obstacle_y[i]=jrh_drone->obstacle_pos_dynamic_yqt.obstacle_y[i];
+			fprintf(obstacle_pos_txt,"time  %f  total_num %d num %d obstacle_x %f  obstacle_y %f\n",tic(),obstacel_amount_total,i+1,interaction_obstacle_x[i],interaction_obstacle_y[i]);
+			printf("obsatcle_total%d--num %d--obsatcle_r_vt %f -- obstacle_x %f--obstacle_y %f\n",obstacel_amount_total,i+1,sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i]),interaction_obstacle_x[i],interaction_obstacle_y[i]);
+			fprintf(model_txt,"obsatcle_total%d num %d --obsatcle_r_vt %f -- obstacle_x %f -- obstacle_y %f\n",obstacel_amount_total,i+1,sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i]),interaction_obstacle_x[i],interaction_obstacle_y[i]);
+			//printf(" obstacle_x %f  obstacle_y %f \n",interaction_obstacle_x[i],interaction_obstacle_y[i]);
+		}
+		for(int i=obstacel_amount_total;i<8;i++)
+		{
+			cruise_obstacle_x[i]=-80;
+			cruise_obstacle_y[i]=-80;
+			interaction_obstacle_x[i]=-80;
+			interaction_obstacle_y[i]=-80;
+		}
+	}
+	else
+	{
+		printf("obstacle   total_num 0  *****************no obstacle**************\n");
+		fprintf(model_txt,"obstacle   total_num 0  *****************no obstacle**************\n");
+	}
+	   printf(" height_now %f\n",jrh_drone->ultrasonic.ranges[0]);
+	  fprintf(model_txt," height_now %f\n",jrh_drone->ultrasonic.ranges[0]);
+
+//////////////////////////////////////////////////////////////////////////
+
+	//45\180度交互程序开始
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	if((model_choose==1||model_choose==2 )&&(jrh_drone->object_pos_dynamic.target_num>0))
+	{
+		if(first_interaction_45)
+		{
+			last_time=0;
+			time_now=tic();
+			dt=0.0f;
+			comd_i[0]=0;
+			comd_i[1]=0;
+			comd_i[2]=0;
+			comd_i[3]=0;
+		    comd_obstacle_i[8]={0.0f};
+			first_interaction_45=false;
+			PID_control_of_xy=false;
+			land=false;
+			first_land=true;
+		}
+		else
+		{
+			time_now=tic();
+			dt=time_now-last_time;
+		}
+
+		///////////////////////////////////////////
+		//计算得到当前的姿态角att_right_now
+	   cvmSet(q_right_now, 0, 0, jrh_drone->attitude_quaternion.q0);
+	   cvmSet(q_right_now, 1, 0, jrh_drone->attitude_quaternion.q1);
+	   cvmSet(q_right_now, 2, 0, jrh_drone->attitude_quaternion.q2);
+	   cvmSet(q_right_now, 3, 0, jrh_drone->attitude_quaternion.q3);
+	   Quaternion_To_Euler(q_right_now,att_right_now);
+		///////////////////////////////////////////
+
+	   float yaw_now=(-cvmGet(att_init,2,0)+cvmGet(att_right_now,2,0));
+ 	  // printf("pitch %f roll %f yaw %f \n",180*cvmGet(att_right_now,1,0)/PI,180*cvmGet(att_right_now,0,0)/PI,180*cvmGet(att_right_now,2,0)/PI);
+ 	   printf("yaw_now %f\n",yaw_now*180/PI);
+ 	  fprintf(model_txt,"yaw_now %f \n",yaw_now);
+	    r_vt_original=sqrt(iRobot_x*iRobot_x+iRobot_y*iRobot_y);
+	    theta_point=atan2(iRobot_y,iRobot_x);
+	    if(model_choose==1)
+	    {
+			iRobot_x=iRobot_x+0.05*cos(iRobot_theta)-cos(yaw_now)*fabs(-0.132*sin(-cvmGet(att_right_now,1,0))+0.15*cos(-cvmGet(att_right_now,1,0)));
+			iRobot_y=iRobot_y+0.05*sin(iRobot_theta)-sin(yaw_now)*fabs(-0.132*sin(-cvmGet(att_right_now,1,0))+0.15*cos(-cvmGet(att_right_now,1,0)));
+			r_vt=sqrt(iRobot_x*iRobot_x+iRobot_y*iRobot_y);
+			if(jrh_drone->ultrasonic.ranges[0]>1.0)
+			{
+				iRobot_x=iRobot_x+0.0*cos(iRobot_theta)-cos(yaw_now)*fabs(-0.132*sin(-cvmGet(att_right_now,1,0))+0.15*cos(-cvmGet(att_right_now,1,0)));
+				iRobot_y=iRobot_y+0.0*sin(iRobot_theta)-sin(yaw_now)*fabs(-0.132*sin(-cvmGet(att_right_now,1,0))+0.15*cos(-cvmGet(att_right_now,1,0)));
+				r_vt=sqrt(iRobot_x*iRobot_x+iRobot_y*iRobot_y);
+			}
+	    }
+	    else if(model_choose==2)
+	    {
+			iRobot_x=iRobot_x+1.0*cos(iRobot_theta)-cos(yaw_now)*fabs(-0.132*sin(-cvmGet(att_right_now,1,0))+0.15*cos(-cvmGet(att_right_now,1,0)));
+			iRobot_y=iRobot_y+1.0*sin(iRobot_theta)-sin(yaw_now)*fabs(-0.132*sin(-cvmGet(att_right_now,1,0))+0.15*cos(-cvmGet(att_right_now,1,0)));
+			r_vt=sqrt(iRobot_x*iRobot_x+iRobot_y*iRobot_y);
+	    }
+
+		pos_now[2]=jrh_drone->ultrasonic.ranges[0];
+
+///////////////////////////////////////////相机高度，规划高度		
+		if(model_choose==1)
+		{
+			if(fabs(r_vt_original-0.1)>0.2)
+			{
+				height_H=(r_vt_original+0.2485)/0.8;
+				height_L=r_vt_original+0.1565;
+			}
+			else if(fabs(r_vt_original-0.1)<0.2)
+			{
+				height_H=2.241*fabs(r_vt_original-0.1)+0.2418;
+				height_L=1.091*fabs(r_vt_original-0.1)+0.2418;
+			}
+
+			if(pos_now[2]>height_H+0.031)
+			{
+				comd_height=height_H+0.031;
+			}
+			else if(pos_now[2]>height_L+0.031)
+			{
+				comd_height=pos_now[2];
+
+			}
+			else
+			{
+				comd_height=height_L+0.031;
+			}
+		}
+		else if(model_choose==2)
+		{
+			if(fabs(r_vt_original-1.0)>0.2)
+			{
+					height_H=(fabs(r_vt_original-1)+1+0.2485)/0.8;
+					height_L=fabs(r_vt_original-1)+1+0.2065;
+			}
+			else if(fabs(r_vt_original-1.0)<0.2)
+			{
+					//height_H=2.5975*fabs(r_vt_original-0.5)+0.63;
+					//height_L=1.535*fabs(r_vt_original-0.5)+0.63;
+				height_H=1.6;
+				height_L=1.45;
+			}
+			if(pos_now[2]>height_H+0.031)
+			{
+				    comd_height=height_H+0.031;
+			}
+			else if(pos_now[2]>height_L+0.031)
+			{
+					comd_height=pos_now[2];
+			}
+			else
+			{
+	     			comd_height=height_L+0.031;
+			}
+		}
+///////////////////////////////////////////一定范围之外改进平行接近法，然后PID控制，最后末端不控垂直降落
+
+///////////////////////////////////////////
+		//高度自保措施 以后注意修改！ToDo
+		if(comd_height>2.0)
+		{
+			comd_height=2.0;
+		}
+////////////////////////////////////////
+
+		if(yaw_now>PI)
+		{
+			yaw_now=yaw_now-2*PI;
+		}
+		else if(yaw_now<-PI)
+		{
+			yaw_now=yaw_now+2*PI;
+		}
+//////////////////////////////////////////////////////////////////////////////////////////////判断障碍物是否进入危险区域，决定是否可以land
+if(obstacel_amount_total>0)
+{
+			for(int i=0;i<obstacel_amount_total;i++)
+			{
+				distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+				if(distance_obstacle<0.6)
+				{
+					no_land=true;
+
+					break;
+				}comd_p[3]=error[3]*kp[3];
+				if(i==obstacel_amount_total-1)
+				{
+					no_land=false;
+				}
+			}
+}
+else
+{
+	no_land=false;
+}
+		///////////////////////////////////////////选择控制模式：1改进平行接近法 2PID控制 3垂直降落
+
+				PID_control_of_xy=true;
+
+				if(model_choose==1)
+				{
+					if(r_vt<0.03 && fabs(error[2])<8 && (jrh_drone->ultrasonic.ranges[0])<0.4 && no_land==false && (jrh_drone->ultrasonic.ranges[0])>0 )
+					{
+						land=true;
+						PID_control_of_xy=false;
+						if(first_land)
+						{
+							remember_theta=iRobot_theta;
+							remember_time=time_now;
+							first_land=false;
+						}
+					}
+			   	}
+				else if(model_choose==2)
+				{
+					if(r_vt<0.15&&(jrh_drone->ultrasonic.ranges[0])<1.7&&fabs(error[2]<20)&&no_land==false && (jrh_drone->ultrasonic.ranges[0])>0 )
+					{
+						land=true;
+						PID_control_of_xy=false;
+					}
+				}
+		//////////////////////////////////////////////
+
+		if(PID_control_of_xy)
+		{
+			if(model_choose==1)
+			{
+
+				error[0]=iRobot_x;
+				error[1]=iRobot_y;
+				error[2]=(iRobot_theta*180)/PI-yaw_now*180/PI;
+				error[3]=comd_height-jrh_drone->ultrasonic.ranges[0];
+				/*
+				if(fabs(error[3])>1)
+				{
+					error[3]=error[3]/2.5;
+				}
+				else if(fabs(error[3])>0.5 && fabs(error[3])<1)
+				{
+					error[3]=error[3]/2;
+				}
+				 */
+
+			}
+			else if(model_choose==2)
+			{
+				error[0]=iRobot_x;
+				error[1]=iRobot_y;
+				if(iRobot_theta>0)
+				{
+				error[2]=(iRobot_theta*180)/PI-180-yaw_now*180/PI;
+				}
+				else
+				{
+					error[2]=(iRobot_theta*180)/PI+180-yaw_now*180/PI;
+				}
+				error[3]=comd_height-jrh_drone->ultrasonic.ranges[0];
+			}
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+					distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+					if(distance_obstacle>1.8)
+					{
+						distance_obstacle=1.8;
+					}
+					error_obstacle[i]=-0.183*fabs(distance_obstacle)+0.33;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+					distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+					if(distance_obstacle>1.8)
+					{
+						distance_obstacle=1.8;
+					}
+					error_obstacle[i]=-0.183*fabs(distance_obstacle)+0.33;
+				}
+			}
+		}
+		if(land)
+		{
+			if(model_choose==1)
+			{
+				if(time_now-remember_time<2)
+				{
+					comd_height=0.2;
+				}
+				else
+				{
+					comd_height=0.15;
+				}
+				error[0]=0;
+				error[1]=0;
+				error[2]=0;
+				error[3]=comd_height-jrh_drone->ultrasonic.ranges[0];
+			}
+			else if(model_choose==2)
+			{
+				comd_height=0.18;
+				error[0]=0;
+				error[1]=0;
+				error[2]=0;
+				error[3]=comd_height-jrh_drone->ultrasonic.ranges[0];
+				//此处添加如果高度到达制定高度、加速度和较小，开始检测加速度是否有突变，如果有则land=false take_off=true model_choose==88
+				//另外到达一定时间后take_off
+				if(fabs(error[3])<0.05)
+				{
+					if(first_land=true)
+					{
+						first_land_time=tic();
+						first_land=false;
+					}
+
+					acc_total=jrh_drone->acceleration.ax*jrh_drone->acceleration.ax+jrh_drone->acceleration.ay*jrh_drone->acceleration.ay+jrh_drone->acceleration.az*jrh_drone->acceleration.az;
+					if(acc_total>acc_land_to_take_off)
+					{
+						land=false;
+						take_off=true;
+						model_choose=88;
+					}
+					if(tic()-first_land_time>5)
+					{
+						land=false;
+						take_off=true;
+						model_choose=88;
+					}
+				}
+			}
+		}	
+	
+///////////////////////////////////////////用来调偏航角的
+
+		if(error[2]>180)
+		{
+			error[2]=(error[2]-2*180);
+		}
+		else if(error[2]<-180)
+		{
+			error[2]=(error[2]+2*180);
+		}
+		//printf("yaw_now %f\n",yaw_now*180/PI);
+		printf("yaw_err  %f\n",error[2]);
+		fprintf(model_txt,"yaw_err  %f\n",error[2]);
+///////////////////////////////////////////	
+	////////////////////////////////////////////计算kp项指令大小
+		comd_p[0]=error[0]*kp[0];
+		comd_p[1]=error[1]*kp[1];
+		comd_p[2]=error[2]*kp[2];
+		comd_p[3]=error[3]*kp[3];
+		if(obstacel_amount_total>0)
+		{
+			for(int i=0;i<obstacle_amount_zy;i++)
+			{
+					comd_obstacle_p[i]=error_obstacle[i]*kp_obstacle;
+			}
+			for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+			{
+					comd_obstacle_p[i]=error_obstacle[i]*kp_obstacle;
+			}
+		}
+	////////////////////////////////////////////计算ki项指令大小
+		if(dt==0.0f)
+		{
+			comd_i[0]=0.0f;
+			comd_i[1]=0.0f;
+			comd_i[2]=0.0f;
+			comd_i[3]=0.0f;
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+						comd_obstacle_i[i]=0;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+						comd_obstacle_i[i]=0;
+				}
+			}
+
+		}
+		else
+		{
+			comd_i[0]=(comd_i[0]+error[0]*dt)*ki[0];
+			comd_i[1]=(comd_i[1]+error[1]*dt)*ki[1];
+			comd_i[2]=(comd_i[2]+error[2]*dt)*ki[2];
+			comd_i[3]=(comd_i[3]+error[3]*dt)*ki[3];
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+						comd_obstacle_i[i]=(comd_obstacle_i[i]+error_obstacle[i]*dt)*ki_obstacle;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+					comd_obstacle_i[i]=(comd_obstacle_i[i]+error_obstacle[i]*dt)*ki_obstacle;
+				}
+			}
+		}
+	////////////////////////////////////////////计算kd项指令大小
+		if(dt==0.0f)
+		{
+			comd_d[0]=0.0f;
+			comd_d[1]=0.0f;
+			comd_d[2]=0.0f;
+			comd_d[3]=0.0f;
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+						comd_obstacle_d[i]=0;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+						comd_obstacle_d[i]=0;
+				}
+			}
+		}
+		else
+		{
+			comd_d[0]=kd[0]*(error[0]-last_error[0])/dt;
+			comd_d[1]=kd[1]*(error[1]-last_error[1])/dt;
+			comd_d[2]=kd[2]*(error[2]-last_error[2])/dt;
+			comd_d[3]=kd[3]*(error[3]-last_error[3])/dt;
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+						comd_obstacle_d[i]=kd_obstacle*(error_obstacle[i]-last_error_obstacle[i])/dt;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+						comd_obstacle_d[i]=kd_obstacle*(error_obstacle[i]-last_error_obstacle[i])/dt;
+				}
+			}
+		}
+	////////////////////////////////////////////整合指令的大小
+
+		if(PID_control_of_xy==1&&land==0)
+		{
+			if(model_choose==1)
+			{
+printf("[45]PID Start!!\n");
+fprintf(model_txt,"[45]PID Start!!\n");
+				comd_angle_x=comd_p[0]+comd_i[0]+comd_d[0];//+0.26*cos(iRobot_theta);
+				comd_angle_y=comd_p[1]+comd_i[1]+comd_d[1];//+0.26*sin(iRobot_theta);
+				comd_yaw_rate=comd_p[2]+comd_i[2]+comd_d[2];
+				comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+				printf("goal_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+				fprintf(model_txt,"goal_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+//printf("obstacle num %d\n",obstacel_amount_total);
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacel_amount_total;i++)
+				{
+					distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+					if(distance_obstacle>0)
+					{
+					comd_angle_x=(comd_angle_x+((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					comd_angle_y=(comd_angle_y+((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					printf("########safe!#######obstacle _comd  x %f y %f\n",((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])),((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					fprintf(model_txt,"########safe!################obstacle _comd  x %f y %f\n",((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])),((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					}
+					else
+					{
+						comd_angle_x=(0.33*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+						comd_angle_y=(0.33*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+						printf("##########Danger!!!!!!!!!!#######obstacle_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+						fprintf(model_txt,"##########Danger!!!!!!!!!!##############obstacle_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+						//printf("-----------------------------------Danger!!!!!!!!!!!----------------------------------------\n");
+					}
+				}
+			}
+			fprintf(error_txt,"[45-PID] [time]  %f  [Tx]  %f  [Ty]  %f   [T_yaw] %f   Tz]  %f   \n",time_now,error[0],error[1],error[2],error[3]);
+			fprintf(comd_setpoint,"[45-PID] [time]  %f  [vx]  %f  [ x_t]  %f   [vy] %f   [y_t]  %f  [r_vt] %f   [i_theta] %f [c_h] %f  [vz] %f [yaw_rate] %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			fprintf(comd_setpoint_block,"[45-PID]  %f    %f    %f   %f   %f     %f   %f    %f   %f  %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			}
+			if(model_choose==2)
+			{
+printf("[180]PID Start!!\n");
+fprintf(model_txt,"[180]PID Start!!\n");
+				comd_angle_x=comd_p[0]+comd_i[0]+comd_d[0]+0.31*cos(iRobot_theta);///////////////////////////////
+				comd_angle_y=comd_p[1]+comd_i[1]+comd_d[1]+0.31*sin(iRobot_theta);///////////////////////////////
+				comd_yaw_rate=comd_p[2]+comd_i[2]+comd_d[2];
+				comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+				printf("goal_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+				fprintf(model_txt,"goal_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+//printf("obstacle num %d\n",obstacel_amount_total);
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacel_amount_total;i++)
+				{
+					distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+					if(distance_obstacle>0)
+					{
+					comd_angle_x=(comd_angle_x+((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					comd_angle_y=(comd_angle_y+((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					printf("########safe!#########obstacle _comd  x %f y %f\n",((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])),((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					fprintf(model_txt,"########safe!################obstacle _comd  x %f y %f\n",((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])),((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+					}
+					else
+					{
+						comd_angle_x=(0.33*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+						comd_angle_y=(0.33*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+						printf("##########Danger!!!!!!!!!!########obstacle_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+						fprintf(model_txt,"##########Danger!!!!!!!!!!##############obstacle_comd x %f y%f\n",comd_angle_x,comd_angle_y);
+						//printf("-------------------------Danger!!!!!!!!!!!---------------------\n");
+					}
+
+				}
+			}
+			fprintf(error_txt,"[180-PID] [time]  %f  [Tx]  %f  [Ty]  %f   [T_yaw] %f   Tz]  %f   \n",time_now,error[0],error[1],error[2],error[3]);
+			fprintf(comd_setpoint,"[180-PID] [time]  %f  [vx]  %f  [ x_t]  %f   [vy] %f   [y_t]  %f  [r_vt] %f   [i_theta] %f [c_h] %f  [vz] %f [yaw_rate] %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			fprintf(comd_setpoint_block,"[180-PID]  %f    %f    %f   %f   %f     %f   %f    %f   %f  %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			}
+			if(model_choose==3)/////////////////////////////////////////////////////////////
+			{
+				printf("######no goal !!\n");
+				fprintf(model_txt,"######no goal !!\n");
+			}
+		}
+		if(land)
+		{
+			if(model_choose==1)
+			{
+				printf("[45]Land Start!!\n");
+				fprintf(model_txt,"[45]Land Start!!\n");
+			comd_angle_x=0;//+0.26*cos(remember_theta);
+			comd_angle_y=0;//+0.26*sin(remember_theta);
+			comd_yaw_rate=0;
+			comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+			fprintf(error_txt,"[45-land] [time]  %f  [Tx]  %f  [Ty]  %f   [T_yaw] %f   [Tz]  %f  \n",time_now,error[0],error[1],error[2],error[3]);
+			fprintf(comd_setpoint,"[45-land] [time]  %f  [vx]  %f  [ x_t]  %f   [vy] %f   [y_t]  %f  [r_vt] %f   [i_theta] %f [c_h] %f  [vz] %f [yaw_rate] %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			fprintf(comd_setpoint_block,"[45-land]  %f    %f    %f   %f   %f     %f   %f    %f   %f  %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			}
+			if(model_choose==2)
+			{
+				printf("[180]Land Start!!\n");
+				fprintf(model_txt,"[180]Land Start!!\n");
+				comd_angle_x=0;
+				comd_angle_y=0;
+				comd_yaw_rate=0;
+				comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+				fprintf(error_txt,"[180-land] [time]  %f  [Tx]  %f  [Ty]  %f   [T_yaw] %f   [Tz]  %f  \n",time_now,error[0],error[1],error[2],error[3]);
+				fprintf(comd_setpoint,"[180--land] [time]  %f  [vx]  %f  [ x_t]  %f   [vy] %f   [y_t]  %f  [r_vt] %f   [i_theta] %f [c_h] %f  [vz] %f [yaw_rate] %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+				fprintf(comd_setpoint_block,"[180-land]  %f    %f    %f   %f   %f     %f   %f    %f   %f  %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+			}
+			if(model_choose==3)/////////////////////////////////////////////////////////////
+			{
+				printf("######no goal !!\n");
+				fprintf(model_txt,"######no goal !!\n");
+			}
+		}
+
+	////////////////////////////////////////////限幅
+		if(model_choose==1)
+		{
+
+				if(jrh_drone->ultrasonic.ranges[0]<1.0)
+				{
+						if(comd_angle_x>0.2f)
+						{
+							comd_angle_x=0.2f;
+						}
+						else if(comd_angle_x<-0.2f)
+						{
+							comd_angle_x=-0.2f;
+						}
+						if(comd_angle_y>0.2f)
+						{
+							comd_angle_y=0.2f;
+						}
+						else if(comd_angle_y<-0.2f)
+						{
+							comd_angle_y=-0.2f;
+						}
+				}
+				else
+				{
+
+						if(comd_angle_x>0.4f)
+						{
+							comd_angle_x=0.4f;
+						}
+						else if(comd_angle_x<-0.4f)
+						{
+							comd_angle_x=-0.4f;
+						}
+						if(comd_angle_y>0.4f)
+						{
+							comd_angle_y=0.4f;
+						}
+						else if(comd_angle_y<-0.4f)
+						{
+							comd_angle_y=-0.4f;
+						}
+				}
+		}
+
+		if(model_choose==2)
+		{
+				if(comd_angle_x>1.0f)
+				{
+					comd_angle_x=1.0f;
+				}
+				else if(comd_angle_x<-1.0f)
+				{
+					comd_angle_x=-1.0f;
+				}
+				if(comd_angle_y>1.0f)
+				{
+					comd_angle_y=1.0f;
+				}
+				else if(comd_angle_y<-1.0f)
+				{
+					comd_angle_y=-1.0f;
+				}
+		}
+
+		if(comd_yaw_rate>20.0f)
+		{
+			comd_yaw_rate=20.0f;
+		}
+		else if(comd_yaw_rate<-20.0f)
+		{
+			comd_yaw_rate=-20.0f;
+		}
+		if(comd_height_v>1.0f)
+		{
+			comd_height_v=1.0f;
+		}
+		else if(comd_height_v<-1.5f)
+		{
+			comd_height_v=-1.5f;
+		}
+	////////////////////////////////////////////
+		fprintf(comd_setpoint_limited," %f    %f   %f   %f  \n",time_now,comd_angle_x,comd_angle_y,comd_height_v);
+
+
+
+
+		last_error[0]=error[0];last_error[1]=error[1];last_error[2]=error[2];last_error[3]=error[3];
+		if(obstacel_amount_total>0)
+		{
+			for(int i=0;i<obstacel_amount_total;i++)
+			{
+				last_error_obstacle[i]=error_obstacle[i];
+			}
+		}
+		last_time=time_now;
+		if(model_choose==1)
+		{
+			printf("rembember_theta%f\n",remember_theta);
+			printf("[45]T %f  yawv   %f   vz %f  c_ height %f   \n",time_now,comd_yaw_rate,comd_height_v,comd_height);
+			printf("[45]vx %f   x_t %f  vy %f  y_t %f r_vt %f   theta %f\n",comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI);
+			printf("[45]height_now  %f  theta_tg %f  \n",pos_now[2],iRobot_theta);
+
+			fprintf(model_txt,"rembember_theta%f\n",remember_theta);
+			fprintf(model_txt,"[45]T %f  yawv   %f   vz %f  c_ height %f   \n",time_now,comd_yaw_rate,comd_height_v,comd_height);
+			fprintf(model_txt,"[45]vx %f   x_t %f  vy %f  y_t %f r_vt %f   theta %f\n",comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI);
+			fprintf(model_txt,"[45]height_now  %f  theta_tg %f  \n",pos_now[2],iRobot_theta);
+
+		}
+		else if(model_choose==2)
+		{
+			//printf("[180]T %f  yawv   %f   vz %f  c_ height %f   \n",time_now,comd_yaw_rate,comd_height_v,comd_height);
+			printf("[180]vx %f--x_t %f  vy %f  y_t %f r_vt %f  i_theta %f\n",comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI);
+			printf("[180]height_now  %f  r_vt_original  %f  v_z %f \n",pos_now[2],r_vt_original,comd_height_v);
+			printf("[180]comd_height  %f   \n",comd_height);
+
+			fprintf(model_txt,"[180]vx %f--x_t %f  vy %f  y_t %f r_vt %f  i_theta %f\n",comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI);
+			fprintf(model_txt,"[180]height_now  %f  r_vt_original  %f  v_z %f \n",pos_now[2],r_vt_original,comd_height_v);
+			fprintf(model_txt,"[180]comd_height  %f   \n",comd_height);
+		}
+
+		////////////////////////////////////////////将指令从赛场动坐标系到地理坐标系
+		float comd_vx=comd_angle_x*cvmGet(R_init,0,0)+comd_angle_y*cvmGet(R_init,0,1)+comd_height_v*cvmGet(R_init,0,2);
+		float comd_vy=comd_angle_x*cvmGet(R_init,1,0)+comd_angle_y*cvmGet(R_init,1,1)+comd_height_v*cvmGet(R_init,1,2);
+		float comd_zv=comd_angle_x*cvmGet(R_init,2,0)+comd_angle_y*cvmGet(R_init,2,1)+comd_height_v*cvmGet(R_init,2,2);
+	////////////////////////////////////////////发送指令地理坐标系中
+		drone->velocity_control(0x49,comd_vx,comd_vy,comd_zv,comd_yaw_rate);
+	}
+	else if(model_choose==0)
+		{
+		//TODO
+		//跟随模式 接下来准备写
+		}
+	else if(model_choose==3)
+	{
+		//TODO
+		//王宁远巡航
+		/*set a circle trajectory of target*/
+	
+		wny_count++;
+		wny_num=wny_count%720;
+		wny_number=(float)wny_num;
+		wny_x_t=1.0*cos(wny_number*3.14/360.0)-1.0;		/*T=14.4s，r=2m，O=（0,0）*/
+		wny_y_t=1.0*sin(wny_number*3.14/360.0);		/*x_limitation and y_limitation will adjust T*/
+
+		/*read parameters*/
+	
+		wny_x_o=0.0;  //obstacle
+		wny_y_o=0.0;
+
+		wny_x_q=px;
+		wny_y_q=py;
+
+		/*calculate target_velocity*/
+	
+		wny_x_qt=wny_x_t-wny_x_q;					
+		wny_y_qt=wny_y_t-wny_y_q;
+		wny_v_tx=wny_k_target*wny_x_qt;
+		wny_v_ty=wny_k_target*wny_y_qt;
+
+
+		/*calculate obstacle_velocity*/
+
+		/*wny_x_wait=obstacle.x[0];			//obstacle from yqt				
+		wny_y_wait=obstacle.y[0];
+		for(int wny_t=1;wny_t<obstacle.num-1;wny_t++)	//select from yqt
+		{
+			if((wny_x_wait*wny_x_wait+wny_y_wait*wny_y_wait)<(obstacle.x[wny_t]*obstacle.x[wny_t]+obstacle.y[wny_t]*obstacle.y[wny_t]))
+			{
+			}
+			else
+			{
+				wny_x_wait=-obstacle.x[wny_t];		
+				wny_y_wait=-obstacle.y[wny_t];
+			}
+		}
+		wny_x_qo=-wny_x_wait;					
+		wny_y_qo=-wny_y_wait;*/
+
+		wny_x_qo=wny_x_q-wny_x_o;
+		wny_y_qo=wny_y_q-wny_y_o;
+		wny_obstacle_distance=sqrt(wny_x_qo*wny_x_qo+wny_y_qo*wny_y_qo);
+	
+		wny_k_o=wny_U*wny_k_target;
+		wny_L_o=wny_R_obstacle/sqrt(wny_U/wny_T-1.0);
+
+		if(wny_obstacle_distance>(wny_r_obstacle+wny_R_obstacle))
+		{
+			wny_k_obstacle=0.0;
+		}	
+		else if(wny_obstacle_distance<(wny_r_obstacle+wny_R_obstacle)&&wny_obstacle_distance>wny_r_obstacle)
+		{
+			wny_a=(wny_obstacle_distance-wny_r_obstacle)/wny_L_o;
+			wny_k_obstacle=wny_k_o/(1.0+wny_a*wny_a);
+		}
+		else if(wny_obstacle_distance<wny_r_obstacle)
+		{
+			wny_b=wny_obstacle_distance/wny_r_obstacle;
+			wny_k_obstacle=wny_k_o/(wny_b*wny_b);
+		}	
+
+		wny_v_ax=wny_k_obstacle*wny_x_qo;
+		wny_v_ay=wny_k_obstacle*wny_y_qo;
+
+
+		/*calculate guidance_velocity*/	
+
+		wny_v_gx=-wny_k_guidance*wny_v_ay;	// lacking the judgment of rotation direction 
+		wny_v_gy=wny_k_guidance*wny_v_ax;	
+
+
+		/*calculate complex_velocity*/
+
+		//wny_v_x=wny_v_tx+wny_v_ax+wny_v_gx;
+		//wny_v_y=wny_v_ty+wny_v_ay+wny_v_gy;
+		wny_v_x=wny_v_tx;
+		wny_v_y=wny_v_ty;
+
+		/*limitation of velocity signal*/
+	
+		if(wny_v_x>wny_vx_limitation)
+		{
+			wny_v_x=wny_vx_limitation;
+		}
+		else if(wny_v_x<-wny_vx_limitation)
+		{
+			wny_v_x=-wny_vx_limitation;
+		}
+		else
+		{
+		}
+
+		if(wny_v_y>wny_vy_limitation)
+		{
+			wny_v_y=wny_vy_limitation;
+		}
+		else if(wny_v_y<-wny_vy_limitation)
+		{
+			wny_v_y=-wny_vy_limitation;
+		}
+		else
+		{
+		}
+
+		/*keep M100 on a certain altitude*/
+
+		/*if(drone->ultrasonic.ranges[0]<0.8 )
+		{
+                       	v_h=0.05;
+		}
+		else if(drone->ultrasonic.ranges[0]>1.0 )
+		{
+                        v_h=-0.05;
+		}
+		else
+		{
+                        v_h=0.0;
+		}*/
+
+			/*transmit velocity signal to M100*/
+		
+			
+		drone->attitude_control( Flight::HorizontalLogic::HORIZONTAL_VELOCITY |
+                            Flight::VerticalLogic::VERTICAL_VELOCITY |
+                            Flight::YawLogic::YAW_PALSTANCE |
+                            Flight::HorizontalCoordinate::HORIZONTAL_BODY |			//BODY or GROUND
+                            Flight::SmoothMode::SMOOTH_ENABLE,
+                            wny_v_x,wny_v_y,0.0,0.0);
+		
+	}
+	else if(model_choose==88)//如果180度感应成功，则起飞
+	{
+		if(first_take_off)
+		{
+			last_time=0;
+			time_now=tic();
+			dt=0.0f;
+			comd_i[0]=0;
+			comd_i[1]=0;
+			comd_i[2]=0;
+			comd_i[3]=0;
+			first_take_off=false;
+		}
+		else
+		{
+			time_now=tic();
+			dt=time_now-last_time;
+		}
+	      error[3]=take_off_height-jrh_drone->ultrasonic.ranges[0];
+////////////////////////////////////////////计算kp项指令大小
+	      comd_p[3]=error[3]*kp[3];
+////////////////////////////////////////////计算ki项指令大小
+	      if(dt==0.0f)
+	     {
+	    	  comd_i[3]=0.0f;
+	     }
+	     else
+	     {
+	    	 comd_i[3]=(comd_i[3]+error[3]*dt)*ki[3];
+	     }
+////////////////////////////////////////////计算kd项指令大小
+	     if(dt==0.0f)
+	     {
+	    	 comd_d[3]=0.0f;
+	     }
+	     else
+	     {
+	     	 comd_d[3]=kd[3]*(error[3]-last_error[3])/dt;
+	     }
+	     comd_angle_x=0;
+	     comd_angle_y=0;
+	     comd_yaw_rate=0;
+	     comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+	 	float comd_vx=comd_angle_x*cvmGet(R_init,0,0)+comd_angle_y*cvmGet(R_init,0,1)+comd_height_v*cvmGet(R_init,0,2);
+	 	float comd_vy=comd_angle_x*cvmGet(R_init,1,0)+comd_angle_y*cvmGet(R_init,1,1)+comd_height_v*cvmGet(R_init,1,2);
+	 	float comd_zv=comd_angle_x*cvmGet(R_init,2,0)+comd_angle_y*cvmGet(R_init,2,1)+comd_height_v*cvmGet(R_init,2,2);
+	 	drone->velocity_control(0x49,comd_vx,comd_vy,comd_zv,comd_yaw_rate);
+	 	last_time=time_now;
+	 	last_error[3]=error[3];
+	}
+
+
+	////////////////////////跳出程序也要降落45度或者180度降落
+
+	if(land && (jrh_drone->object_pos_dynamic.target_num==0) )
+	{
+		  time_now=tic();
+	   	  dt=time_now-last_time;
+	   	  if(model_choose==1)
+	   	  {
+	   		  if(time_now-remember_time<2)
+	   		  {
+		   		  comd_height=0.2;
+	   		  }
+	   		  else
+	   		  {
+	   	 		  comd_height=0.15;
+	   		  }
+	   	  }
+	   	  else if(model_choose==2)
+	   	  {
+	   		  comd_height=0.18;
+	   	  }
+		  error[3]=comd_height-jrh_drone->ultrasonic.ranges[0];
+		  ////////////////////////////////////////////计算kp项指令大小
+		  		comd_p[3]=error[3]*kp[3];
+		  	////////////////////////////////////////////计算ki项指令大小
+		  		if(dt==0.0f)
+		  		{
+		  			comd_i[3]=0.0f;
+		  		}
+		  		else
+		  		{
+		  			comd_i[3]=(comd_i[3]+error[3]*dt)*ki[3];
+		  		}
+		  	////////////////////////////////////////////计算kd项指令大小
+		  		if(dt==0.0f)
+		  		{
+		  			comd_d[3]=0.0f;
+		  		}
+		  		else
+		  		{
+		  			comd_d[3]=kd[3]*(error[3]-last_error[3])/dt;
+		  		}
+if(model_choose==1)
+{
+	printf("[45]Land-Lost  Start!!\n");
+	fprintf(model_txt,"[45]Land-Lost  Start!!\n");
+		comd_angle_x=0;//+0.26*cos(remember_theta);
+		comd_angle_y=0;//+0.26*sin(remember_theta);
+		comd_yaw_rate=0;
+		comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+		fprintf(error_txt,"[45-land-lost] [time]  %f  [error_x]  %f  [error_y]  %f   [error_yaw] %f   [error_z]  %f   \n",time_now,error[0],error[1],error[2],error[3]);
+		fprintf(comd_setpoint,"[45-land-lost] [time]  %f  [comd_vx]  %f  [ x_t]  %f   [comd_vy] %f   [y_t]  %f  [r_vt] %f   [theta] %f [c_height] %f  [vz] %f [yaw_rate] %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+		fprintf(comd_setpoint_block,"[45-land-lost]  %f    %f    %f   %f   %f     %f   %f    %f   %f  %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+}
+else if(model_choose==2)
+{
+printf("[180]Land-Lost  Start!!\n");
+fprintf(model_txt,"[180]Land-Lost  Start!!\n");
+		comd_angle_x=0;
+		comd_angle_y=0;
+		comd_yaw_rate=0;
+		comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+
+		printf("[180] v_z %f \n",comd_height_v);
+		fprintf(model_txt,"[180] v_z %f \n",comd_height_v);
+
+		fprintf(error_txt,"[180-land-lost] [time]  %f  [error_x]  %f  [error_y]  %f   [error_yaw] %f   [error_z]  %f   \n",time_now,error[0],error[1],error[2],error[3]);
+		fprintf(comd_setpoint,"[180-land-lost] [time]  %f  [comd_vx]  %f  [ x_t]  %f   [comd_vy] %f   [y_t]  %f  [r_vt] %f   [theta] %f [c_height] %f  [vz] %f [yaw_rate] %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+		fprintf(comd_setpoint_block,"[180-land-lost]  %f    %f    %f   %f   %f     %f   %f    %f   %f  %f \n",time_now,comd_angle_x,iRobot_x,comd_angle_y,iRobot_y,r_vt,iRobot_theta*180/PI,comd_height,comd_height_v,comd_yaw_rate);
+}
+	float comd_vx=comd_angle_x*cvmGet(R_init,0,0)+comd_angle_y*cvmGet(R_init,0,1)+comd_height_v*cvmGet(R_init,0,2);
+	float comd_vy=comd_angle_x*cvmGet(R_init,1,0)+comd_angle_y*cvmGet(R_init,1,1)+comd_height_v*cvmGet(R_init,1,2);
+	float comd_zv=comd_angle_x*cvmGet(R_init,2,0)+comd_angle_y*cvmGet(R_init,2,1)+comd_height_v*cvmGet(R_init,2,2);
+	drone->velocity_control(0x49,comd_vx,comd_vy,comd_zv,comd_yaw_rate);
+	last_time=time_now;
+	last_error[3]=error[3];
+	if(model_choose==2)
+	{
+		if(fabs(error[3])<0.05)
+		{
+				if(first_land=true)
+				{
+					first_land_time=tic();
+					first_land=false;
+				}
+
+				acc_total=jrh_drone->acceleration.ax*jrh_drone->acceleration.ax+jrh_drone->acceleration.ay*jrh_drone->acceleration.ay+jrh_drone->acceleration.az*jrh_drone->acceleration.az;
+				if(acc_total>acc_land_to_take_off)
+				{
+					land=false;
+					take_off=true;
+					model_choose=88;
+				}
+				if(tic()-first_land_time>5)
+				{
+					land=false;
+					take_off=true;
+					model_choose=88;
+				}
+		}
+	}
+	}
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////避障/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+	if((obstacel_amount_total)>0&&iRobot_num==0&&cruise==0)
+	{
+		if(first_interaction_45)
+		{
+			last_time=0;
+			time_now=tic();
+			dt=0.0f;
+			comd_obstacle_i[8]={0.0f};
+			first_interaction_45=false;
+		}
+		else
+		{
+			time_now=tic();
+			dt=time_now-last_time;
+		}
+
+		if(obstacel_amount_total>0)
+		{
+			for(int i=0;i<obstacle_amount_zy;i++)
+			{
+				distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+				if(distance_obstacle>1.8)
+				{
+					distance_obstacle=1.8;
+				}
+				error_obstacle[i]=-0.183*fabs(distance_obstacle)+0.33;
+			}
+			for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+			{
+				distance_obstacle=sqrt(interaction_obstacle_x[i]*interaction_obstacle_x[i]+interaction_obstacle_y[i]*interaction_obstacle_y[i])-1.2;
+				if(distance_obstacle>1.8)
+				{
+					distance_obstacle=1.8;
+				}
+				error_obstacle[i]=-0.183*fabs(distance_obstacle)+0.33;
+			}
+		}
+		error[3]=1.5-jrh_drone->ultrasonic.ranges[0];
+////////////////////kp项
+		comd_p[3]=error[3]*kp[3];
+		if(obstacel_amount_total>0)
+		{
+			for(int i=0;i<obstacle_amount_zy;i++)
+			{
+					comd_obstacle_p[i]=error_obstacle[i]*kp_obstacle;
+			}
+			for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+			{
+					comd_obstacle_p[i]=error_obstacle[i]*kp_obstacle;
+			}
+		}
+////////////////////Ki项
+		if(dt==0.0f)
+    	{
+			comd_i[3]=0;
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+					comd_obstacle_i[i]=0;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+					comd_obstacle_i[i]=0;
+				}
+			}
+
+		}
+		else
+		{
+			comd_i[3]=(comd_i[3]+error[3]*dt)*ki[3];
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+						comd_obstacle_i[i]=(comd_obstacle_i[i]+error_obstacle[i]*dt)*ki_obstacle;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+					comd_obstacle_i[i]=(comd_obstacle_i[i]+error_obstacle[i]*dt)*ki_obstacle;
+				}
+	     	}
+		 }
+////////////////////////////////////////////////Kd项
+		if(dt==0.0f)
+	    {
+			comd_d[3]=0;
+			if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+					comd_obstacle_d[i]=0;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+					comd_obstacle_d[i]=0;
+				}
+			}
+		}
+		else
+		{
+			comd_d[3]=kd[3]*(error[3]-last_error[3])/dt;
+		   if(obstacel_amount_total>0)
+			{
+				for(int i=0;i<obstacle_amount_zy;i++)
+				{
+					comd_obstacle_d[i]=ki_obstacle*(error_obstacle[i]-last_error_obstacle[i])/dt;
+				}
+				for(int i=obstacle_amount_zy;i<obstacel_amount_total;i++)
+				{
+					comd_obstacle_d[i]=ki_obstacle*(error_obstacle[i]-last_error_obstacle[i])/dt;
+				}
+			}
+		}
+///////////////////////////////////////////////////////////////
+		if(obstacel_amount_total>0)
+		{
+			for(int i=0;i<obstacel_amount_total;i++)
+			{
+				if(distance_obstacle>0)
+				{
+					 comd_angle_x=((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i]));
+				     comd_angle_y=((comd_obstacle_p[i]+comd_obstacle_i[i]+comd_obstacle_d[i]))*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i]));
+				}
+				else
+				{
+						comd_angle_x=(0.33*cos(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+						comd_angle_y=(0.33*sin(atan2(-interaction_obstacle_y[i],-interaction_obstacle_x[i])));
+				}
+				printf("obstacle _comd  x %f y %f   comd_total  %f\n",comd_angle_x,comd_angle_y,sqrt(comd_angle_x*comd_angle_x+comd_angle_y*comd_angle_y));
+			 }
+		}
+		comd_height_v=comd_p[3]+comd_i[3]+comd_d[3];
+
+			  if(comd_angle_x>0.33f)
+				{
+					comd_angle_x=0.33f;
+				}
+				else if(comd_angle_x<-0.33f)
+				{
+					comd_angle_x=-0.33f;
+				}
+				if(comd_angle_y>0.33f)
+				{
+					comd_angle_y=0.33f;
+				}
+				else if(comd_angle_y<-0.33f)
+				{
+					comd_angle_y=-0.33f;
+				}
+				if(comd_height_v>0.33f)
+				{
+					comd_height_v=0.33f;
+				}
+				else if(comd_height_v<-0.33f)
+				{
+					comd_height_v=-0.33f;
+				}
+				for(int i=0;i<obstacel_amount_total;i++)
+				{
+					fprintf(obstacle_comd_txt,"total_num %d num %d  comd_x  %f  comd_y  %f  comd_z  %f\n",obstacel_amount_total,i+1,comd_angle_x,comd_angle_y,comd_height_v);
+				}
+				float comd_vx=comd_angle_x*cvmGet(R_init,0,0)+comd_angle_y*cvmGet(R_init,0,1)+comd_height_v*cvmGet(R_init,0,2);
+				float comd_vy=comd_angle_x*cvmGet(R_init,1,0)+comd_angle_y*cvmGet(R_init,1,1)+comd_height_v*cvmGet(R_init,1,2);
+				float comd_zv=comd_angle_x*cvmGet(R_init,2,0)+comd_angle_y*cvmGet(R_init,2,1)+comd_height_v*cvmGet(R_init,2,2);
+				drone->velocity_control(0x49,comd_vx,comd_vy,comd_zv,0);
+				last_time=time_now;
+				last_error[3]=error[3];
+				if(obstacel_amount_total>0)
+				{
+					for(int i=0;i<obstacel_amount_total;i++)
+					{
+						last_error_obstacle[i]=error_obstacle[i];
+					}
+				}
+	}
+
+*/
+
+/*
+///////////////////////////////////////////////////////////////////////////////////////巡航/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//TODO
+cruise=0;//是否巡航取决于策略的决策
+
+if(cruise)
+{
+	printf("cruise start!!!\n");
+	//TODO 调用一个函数从而确定巡航点
+	close_list_num=0;
+	open_list_num=0;
+	close_list_x[169]={-80};
+	close_list_y[169]={-80};
+	open_list_x[1600]={-80};
+	open_list_y[1600]={-80};
+	open_list_x2[1600]={-80};
+	open_list_y2[1600]={-80};
+	parent_list_x[169][169]={-80};
+	parent_list_y[169][169]={-80};
+	F_power[1600]={1294};
+	G_power[1600]={1294};
+	in_open_list[1600]={0};
+	warning_num=0;
+	emerge=false;
+/////////////////////////////////////////////////////////////////////////TODO
+	race_pos_x=(-guidance_initial_x+jrh_drone->guidance_pos.vector.x)*cvmGet(R_init,0,0)+(-guidance_initial_y+jrh_drone->guidance_pos.vector.y)*cvmGet(R_init,1,0)-jrh_drone->ultrasonic.ranges[0]*cvmGet(R_init,2,0);
+	race_pos_y=(-guidance_initial_x+jrh_drone->guidance_pos.vector.x)*cvmGet(R_init,0,1)+(-guidance_initial_y+jrh_drone->guidance_pos.vector.y)*cvmGet(R_init,1,1)-jrh_drone->ultrasonic.ranges[0]*cvmGet(R_init,2,1);
+	race_pos_x=race_pos_x+initial_pos_x;
+	race_pos_y=race_pos_y+initial_pos_y;
+printf("float  pos_x  %f pos_y %f\n",race_pos_x,race_pos_y);
+fprintf(global_race_txt,"time %f  global_race_x %f  global_race_y %f",tic(),race_pos_x,race_pos_y);
+//TODO
+//cruise_to_target_x//注意根据策略计算巡航全局坐标点
+//后期根据策略给出该点坐标TODO
+
+	cruise_to_target_x=0;
+	cruise_to_target_y=5;
+
+
+	cruise_to_target_x=cruise_to_target_x-race_pos_x;
+	cruise_to_target_y=cruise_to_target_y-race_pos_y;
+	if((fabs(cruise_to_target_x)>6.5)||(fabs(cruise_to_target_y)>6.5))
+	{
+		if(cruise_to_target_x>0)
+		{
+			if(fabs(cruise_to_target_y)<6.5)
+			{
+			cruise_to_target_y=6*(cruise_to_target_y/cruise_to_target_x);
+			cruise_to_target_x=6;
+			}
+			else
+			{
+				cruise_to_target_x=6/(cruise_to_target_y/cruise_to_target_x);
+				cruise_to_target_y=6;
+			}
+		}
+		else
+		{
+			if(fabs(cruise_to_target_y)<6.5)
+			{
+				cruise_to_target_y=-6*(cruise_to_target_y/cruise_to_target_x);
+				cruise_to_target_x=-6;
+			}
+			else
+			{
+				cruise_to_target_x=-6/(cruise_to_target_y/cruise_to_target_x);
+				cruise_to_target_y=-6;
+			}
+		}
+	}
+	cruise_target_x=cvRound(cruise_to_target_x);
+	cruise_target_y=cvRound(cruise_to_target_y);
+	cruise_target_x=cruise_target_x+6;
+	cruise_target_y=cruise_target_y+6;
+/////////////////////////////////////////////////////////////////////////////
+if((obstacel_amount_total)>0)//找到障碍物周围的close_list
+{
+	for(int i=0;i<obstacel_amount_total;i++)
+	{
+		close_list_x[i]=cruise_obstacle_x[i];
+		close_list_y[i]=cruise_obstacle_y[i];
+	}
+	for(int i=0;i<obstacel_amount_total;i++)
+	{
+		int j=obstacel_amount_total+i*8;
+		{
+			close_list_x[j]=cruise_obstacle_x[i]-1;
+			close_list_y[j]=cruise_obstacle_y[i];
+			if((close_list_x[j]<0||close_list_x[j]>12)||(close_list_y[j]<0||close_list_y[j]>12))
+			{
+				close_list_x[j]=-80;
+				close_list_y[j]=-80;
+			}
+			close_list_x[j+1]=cruise_obstacle_x[i];
+			close_list_y[j+1]=cruise_obstacle_y[i]+1;
+			if((close_list_x[j+1]<0||close_list_x[j+1]>12)||(close_list_y[j+1]<0||close_list_y[j+1]>12))
+			{
+				close_list_x[j+1]=-80;
+				close_list_y[j+1]=-80;
+			}
+			close_list_x[j+2]=cruise_obstacle_x[i];
+			close_list_y[j+2]=cruise_obstacle_y[i]-1;
+			if((close_list_x[j+2]<0||close_list_x[j+2]>12)||(close_list_y[j+2]<0||close_list_y[j+2]>12))
+			{
+				close_list_x[j+2]=-80;
+				close_list_y[j+2]=-80;
+			}
+			close_list_x[j+3]=cruise_obstacle_x[i]+1;
+			close_list_y[j+3]=cruise_obstacle_y[i];
+			if((close_list_x[j+3]<0||close_list_x[j+3]>12)||(close_list_y[j+3]<0||close_list_y[j+3]>12))
+			{
+				close_list_x[j+3]=-80;
+				close_list_y[j+3]=-80;
+			}
+			close_list_x[j+4]=cruise_obstacle_x[i]-1;
+			close_list_y[j+4]=cruise_obstacle_y[i]+1;
+			if((close_list_x[j+4]<0||close_list_x[j+4]>12)||(close_list_y[j+4]<0||close_list_y[j+4]>12))
+			{
+				close_list_x[j+4]=-80;
+				close_list_y[j+4]=-80;
+			}
+			close_list_x[j+5]=cruise_obstacle_x[i]+1;
+			close_list_y[j+5]=cruise_obstacle_y[i]+1;
+			if((close_list_x[j+5]<0||close_list_x[j+5]>12)||(close_list_y[j+5]<0||close_list_y[j+5]>12))
+			{
+				close_list_x[j+5]=-80;
+				close_list_y[j+5]=-80;
+			}
+			close_list_x[j+6]=cruise_obstacle_x[i]-1;
+			close_list_y[j+6]=cruise_obstacle_y[i]-1;
+			if((close_list_x[j+6]<0||close_list_x[j+6]>12)||(close_list_y[j+6]<0||close_list_y[j+6]>12))
+			{
+				close_list_x[j+6]=-80;
+				close_list_y[j+6]=-80;
+			}
+			close_list_x[j+7]=cruise_obstacle_x[i]+1;
+			close_list_y[j+7]=cruise_obstacle_y[i]-1;
+			if((close_list_x[j+7]<0||close_list_x[j+7]>12)||(close_list_y[j+7]<0||close_list_y[j+7]>12))
+			{
+				close_list_x[j+7]=-80;
+				close_list_y[j+7]=-80;
+			}
+		}
+	}
+}
+close_list_num=9*obstacel_amount_total;
+find_cruise=false;
+
+	open_list_x[0]=6;
+	open_list_y[0]=6;
+	open_list_x[1]=5;
+	open_list_y[1]=6;
+	open_list_x[2]=6;
+	open_list_y[2]=7;
+	open_list_x[3]=6;
+	open_list_y[3]=5;
+	open_list_x[4]=7;
+	open_list_y[4]=6;
+	open_list_x[5]=5;
+	open_list_y[5]=7;
+	open_list_x[6]=5;
+	open_list_y[6]=5;
+	open_list_x[7]=7;
+	open_list_y[7]=7;
+	open_list_x[8]=7;
+	open_list_y[8]=5;
+
+	open_list_x2[0]=6;
+	open_list_y2[0]=6;
+	open_list_x2[1]=5;
+	open_list_y2[1]=6;
+	open_list_x2[2]=6;
+	open_list_y2[2]=7;
+	open_list_x2[3]=6;
+	open_list_y2[3]=5;
+	open_list_x2[4]=7;
+	open_list_y2[4]=6;
+	open_list_x2[5]=5;
+	open_list_y2[5]=7;
+	open_list_x2[6]=5;
+	open_list_y2[6]=5;
+	open_list_x2[7]=7;
+	open_list_y2[7]=7;
+	open_list_x2[8]=7;
+	open_list_y2[8]=5;
+
+	open_list_num=9;
+
+	parent_list_x[6][6]=6;
+	parent_list_y[6][6]=6;
+	parent_list_x[5][6]=6;
+	parent_list_y[5][6]=6;
+	parent_list_x[6][7]=6;
+	parent_list_y[6][7]=6;
+	parent_list_x[6][5]=6;
+	parent_list_y[6][5]=6;
+	parent_list_x[7][6]=6;
+	parent_list_y[7][6]=6;
+	parent_list_x[5][7]=6;
+	parent_list_y[5][7]=6;
+	parent_list_x[5][5]=6;
+	parent_list_y[5][5]=6;
+	parent_list_x[7][7]=6;
+	parent_list_y[7][7]=6;
+	parent_list_x[7][5]=6;
+	parent_list_y[7][5]=6;
+
+	for(int i=0;i<close_list_num;i++)
+	{
+			parent_list_x[close_list_x[i]][close_list_y[i]]=-80;
+			parent_list_y[close_list_x[i]][close_list_y[i]]=-80;
+	}
+
+	for(int i=0;i<open_list_num;i++) //看open_list中是否有在close_list中的
+	{
+		for(int j=0;j<close_list_num;j++)
+		{
+				if((open_list_x[i]==close_list_x[j])&&(open_list_y[i]==close_list_y[j]))
+				{
+						open_list_x[i]=-80;
+						open_list_y[i]=-80;
+				}
+		}
+	}
+
+
+close_list_x[close_list_num]=6;//将起点放到close_list中
+close_list_y[close_list_num]=6;
+close_list_num=close_list_num+1;
+open_list_x[0]=-80;//open_list中将起点删除
+open_list_y[0]=-80;
+F_power[0]=1294;
+
+
+for(int i=0;i<open_list_num;i++)//计算得到每一个open_list中的F G的值
+{
+	if(((open_list_x[i])==-80)&&((open_list_y[i])==-80))
+	{
+		F_power[i]=1294;
+		G_power[i]=1294;
+	}
+	else
+	{
+		if(i<5)
+		{
+			F_power[i]=10+10*(abs(cruise_target_x-open_list_x[i])+abs(cruise_target_y-open_list_y[i]));
+			G_power[i]=10;
+		}
+		else
+		{
+			F_power[i]=14+10*(abs(cruise_target_x-open_list_x[i])+abs(cruise_target_y-open_list_y[i]));
+			G_power[i]=14;
+		}
+	}
+}
+
+		///////////////////////////////////////////////////////////////////////
+while(find_cruise==0)
+{
+	for(int i=0;i<open_list_num;i++)
+	{
+		if(((open_list_x[i])==-80)&&((open_list_y[i])==-80))
+		{
+			warning_num=warning_num+1;
+		}
+	}
+	if(warning_num==open_list_num)
+	{
+		emerge=true;
+		break;
+	}
+if(emerge==false)
+{
+	F_power_min=F_power[open_list_num-1];
+	num_F_power_min=open_list_num-1;
+
+	for(int i=open_list_num-2;i>=0;i--)//找到最小的F值(倒叙查找)
+	{
+		if(((open_list_x[i])!=-80)&&((open_list_y[i])!=-80))
+		{
+			if(F_power[i]<F_power_min)
+			{
+				F_power_min=F_power[i];
+				num_F_power_min=i;
+			}
+		}
+	}
+	close_list_x[close_list_num]=open_list_x[num_F_power_min];//将最小的那个F值放到close_list中
+	close_list_y[close_list_num]=open_list_y[num_F_power_min];
+	close_list_num=close_list_num+1;
+
+	for(int i=0;i<close_list_num;i++)
+	{
+		if((close_list_x[i]==cruise_target_x)&&(close_list_y[i]==cruise_target_y))
+		{
+			find_cruise=true;
+			break;
+		}
+	}
+	if(find_cruise)
+	{
+		break;
+	}
+
+	 open_list_x[open_list_num]=open_list_x[num_F_power_min]-1;
+	 open_list_y[open_list_num]=open_list_y[num_F_power_min];
+	 open_list_x[open_list_num+1]=open_list_x[num_F_power_min];
+	 open_list_y[open_list_num+1]=open_list_y[num_F_power_min]+1;
+	 open_list_x[open_list_num+2]=open_list_x[num_F_power_min];
+	 open_list_y[open_list_num+2]=open_list_y[num_F_power_min]-1;
+	 open_list_x[open_list_num+3]=open_list_x[num_F_power_min]+1;
+	 open_list_y[open_list_num+3]=open_list_y[num_F_power_min];
+	 open_list_x[open_list_num+4]=open_list_x[num_F_power_min]-1;
+	 open_list_y[open_list_num+4]=open_list_y[num_F_power_min]+1;
+	 open_list_x[open_list_num+5]=open_list_x[num_F_power_min]-1;
+	 open_list_y[open_list_num+5]=open_list_y[num_F_power_min]-1;
+	 open_list_x[open_list_num+6]=open_list_x[num_F_power_min]+1;
+	 open_list_y[open_list_num+6]=open_list_y[num_F_power_min]+1;
+	 open_list_x[open_list_num+7]=open_list_x[num_F_power_min]+1;
+	 open_list_y[open_list_num+7]=open_list_y[num_F_power_min]-1;
+
+
+	 open_list_x2[open_list_num]=open_list_x2[num_F_power_min]-1;
+	 open_list_y2[open_list_num]=open_list_y2[num_F_power_min];
+	 open_list_x2[open_list_num+1]=open_list_x2[num_F_power_min];
+	 open_list_y2[open_list_num+1]=open_list_y2[num_F_power_min]+1;
+	 open_list_x2[open_list_num+2]=open_list_x2[num_F_power_min];
+	 open_list_y2[open_list_num+2]=open_list_y2[num_F_power_min]-1;
+	 open_list_x2[open_list_num+3]=open_list_x2[num_F_power_min]+1;
+	 open_list_y2[open_list_num+3]=open_list_y2[num_F_power_min];
+	 open_list_x2[open_list_num+4]=open_list_x2[num_F_power_min]-1;
+	 open_list_y2[open_list_num+4]=open_list_y2[num_F_power_min]+1;
+	 open_list_x2[open_list_num+5]=open_list_x2[num_F_power_min]-1;
+	 open_list_y2[open_list_num+5]=open_list_y2[num_F_power_min]-1;
+	 open_list_x2[open_list_num+6]=open_list_x2[num_F_power_min]+1;
+	 open_list_y2[open_list_num+6]=open_list_y2[num_F_power_min]+1;
+	 open_list_x2[open_list_num+7]=open_list_x2[num_F_power_min]+1;
+	 open_list_y2[open_list_num+7]=open_list_y2[num_F_power_min]-1;
+
+	 for(int i=0;i<8;i++)
+	 {
+		if((open_list_x[open_list_num+i]<0)||(open_list_x[open_list_num+i]>12)||(open_list_y[open_list_num+i]<0)||(open_list_y[open_list_num+i]>12))
+		{
+			open_list_x[open_list_num+i]=-80;
+			open_list_y[open_list_num+i]=-80;
+			F_power[open_list_num+i]=1294;
+		}
+		else//在这个区域
+		{
+			for(int j=0;j<close_list_num;j++)//看是否在close_list中
+			{
+				if((open_list_x[open_list_num+i]==close_list_x[j])&&(open_list_y[open_list_num+i]==close_list_y[j]))
+				{
+					open_list_x[open_list_num+i]=-80;
+					open_list_y[open_list_num+i]=-80;
+					F_power[open_list_num+i]=1294;
+				}
+			}
+			for(int j=0;j<open_list_num;j++)//看是否在open_list中
+			{
+				if((open_list_x[open_list_num+i]!=-80)&&(open_list_y[open_list_num+i]!=-80))
+				{
+					if((open_list_x[open_list_num+i]==open_list_x[j])&&(open_list_y[open_list_num+i]==open_list_y[j]))
+					{
+						in_open_list[open_list_num+i]=1;
+						num_in_open_list=j;
+					}
+				}
+			}
+
+			if((open_list_x[open_list_num+i]!=-80)&&(open_list_y[open_list_num+i]!=-80))
+			{
+			if(in_open_list[open_list_num+i])
+			{
+				if(fabs(sqrt((open_list_x[open_list_num+i]-open_list_x[num_F_power_min])*(open_list_x[open_list_num+i]-open_list_x[num_F_power_min])+(open_list_y[open_list_num+i]-open_list_y[num_F_power_min])*(open_list_y[open_list_num+i]-open_list_y[num_F_power_min]))-1)<0.1)
+				{
+					if(G_power[num_F_power_min]+10<G_power[num_in_open_list])
+					{
+						G_power[num_in_open_list]=G_power[num_F_power_min]+10;
+						F_power[num_in_open_list]=G_power[num_in_open_list]+10*(abs(cruise_target_x-open_list_x[num_in_open_list])+abs(cruise_target_y-open_list_y[num_in_open_list]));
+						F_power[open_list_num+i]=F_power[num_in_open_list];
+						G_power[open_list_num+i]=G_power[num_in_open_list];
+						parent_list_x[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=parent_list_x[open_list_x[num_F_power_min]][open_list_y[num_F_power_min]];
+						parent_list_y[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=parent_list_y[open_list_x[num_F_power_min]][open_list_y[num_F_power_min]];
+					}
+					else
+					{
+						G_power[open_list_num+i]=G_power[num_in_open_list];
+						F_power[open_list_num+i]=F_power[num_in_open_list];
+					}
+				}
+				else
+				{
+					if(G_power[num_F_power_min]+14<G_power[num_in_open_list])
+					{
+							G_power[num_in_open_list]=G_power[num_F_power_min]+14;
+							F_power[num_in_open_list]=G_power[num_in_open_list]+10*(abs(cruise_target_x-open_list_x[num_in_open_list])+abs(cruise_target_y-open_list_y[num_in_open_list]));
+							F_power[open_list_num+i]=F_power[num_in_open_list];
+							G_power[open_list_num+i]=G_power[num_in_open_list];
+							parent_list_x[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=parent_list_x[open_list_x[num_F_power_min]][open_list_y[num_F_power_min]];
+							parent_list_y[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=parent_list_y[open_list_x[num_F_power_min]][open_list_y[num_F_power_min]];
+					}
+					else
+					{
+
+						    G_power[open_list_num+i]=G_power[num_in_open_list];
+						    F_power[open_list_num+i]=F_power[num_in_open_list];
+					}
+				}
+
+			}
+			else
+			{
+				if((open_list_x[open_list_num+i]!=-80)&&(open_list_y[open_list_num+i]!=-80))
+				{
+					if(fabs(sqrt((open_list_x[open_list_num+i]-open_list_x[num_F_power_min])*(open_list_x[open_list_num+i]-open_list_x[num_F_power_min])+(open_list_y[open_list_num+i]-open_list_y[num_F_power_min])*(open_list_y[open_list_num+i]-open_list_y[num_F_power_min]))-1)<0.1)
+					{
+						G_power[open_list_num+i]=10+G_power[num_F_power_min];
+						F_power[open_list_num+i]=G_power[open_list_num+i]+10*(abs(cruise_target_x-open_list_x[open_list_num+i])+abs(cruise_target_y-open_list_y[open_list_num+i]));
+						parent_list_x[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=open_list_x[num_F_power_min];
+						parent_list_y[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=open_list_y[num_F_power_min];
+					}
+					else
+					{
+						G_power[open_list_num+i]=14+G_power[num_F_power_min];
+						F_power[open_list_num+i]=G_power[open_list_num+i]+10*(fabs(cruise_target_x-open_list_x[open_list_num+i])+fabs(cruise_target_y-open_list_y[open_list_num+i]));
+						parent_list_x[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=open_list_x[num_F_power_min];
+						parent_list_y[open_list_x[open_list_num+i]][open_list_y[open_list_num+i]]=open_list_y[num_F_power_min];
+
+					}
+				}
+
+		   }
+		}
+		}
+	 }
+
+//printf("min_x %d min_y %d  parent_min_x %d parent_min_y %d\n",open_list_x[num_F_power_min],open_list_y[num_F_power_min],parent_list_x[open_list_x[num_F_power_min]][open_list_y[num_F_power_min]],parent_list_y[open_list_x[num_F_power_min]][open_list_y[num_F_power_min]]);
+	open_list_num=open_list_num+8;
+	for(int i=0;i<open_list_num;i++)
+	{
+		if((open_list_x[i]==open_list_x[num_F_power_min])&&(open_list_y[i]==open_list_y[num_F_power_min]))
+		{
+			open_list_x[i]=-80;
+			open_list_y[i]=-80;
+		}
+	}
+	open_list_x[num_F_power_min]=-80;
+	open_list_y[num_F_power_min]=-80;
+//printf("open_list_num %d\n",open_list_num);
+
+//for(int i=0;i<open_list_num;i++)
+//{
+	//printf("[%d] %d	%d     F %d  G %d  yn %d  parent_x %d  parent_y %d\n",i,open_list_x2[i],open_list_y2[i],F_power[i],G_power[i],in_open_list[i],parent_list_x[open_list_x2[i]][open_list_y2[i]],parent_list_y[open_list_x2[i]][open_list_y2[i]]);
+//}
+
+//printf("min_F %d num %d  min G %d \n",F_power_min,num_F_power_min,G_power[num_F_power_min]);
+}
+}//find_cruise
+
+if(emerge==false)
+{
+fprintf(parent_list_txt,"[%d  %d]\n",cruise_target_x,cruise_target_y);
+remember_parent_x=cruise_target_x;
+remember_parent_y=cruise_target_y;
+int remember_parent_x_initial=cruise_target_x;
+int remember_parent_y_initial=cruise_target_y;
+//printf("adfadsfadfafd     %d %d \n",remember_parent_x,remember_parent_y);
+while((remember_parent_x!=6)||(remember_parent_y!=6))
+{
+	fprintf(parent_list_txt,"[%d  %d]\n",parent_list_x[remember_parent_x][remember_parent_y],parent_list_y[remember_parent_x][remember_parent_y]);
+	remember_parent_x_comd=remember_parent_x;
+	remember_parent_y_comd=remember_parent_y;
+	int remember_parent_x2=parent_list_x[remember_parent_x][remember_parent_y];
+	int remember_parent_y2=parent_list_y[remember_parent_x][remember_parent_y];
+	remember_parent_x=remember_parent_x2;
+	remember_parent_y=remember_parent_y2;
+	//printf("adfadsfadfafd     %d %d \n",remember_parent_x,remember_parent_y);
+}
+//printf("[%d  %d]\n",parent_list_x[remember_parent_x][remember_parent_y],parent_list_y[remember_parent_x][remember_parent_y]);
+
+//fprintf(parent_list_txt,"[%d  %d]\n",parent_list_x[remember_parent_x][remember_parent_y],parent_list_y[remember_parent_x][remember_parent_y]);
+//fprintf(parent_list_txt,"[6  6]\n");
+fprintf(parent_list_txt,"////////////////////////////////////////////////////////////////////\n");
+
+if(first_cruise)
+{
+	dt=0;
+	cruise_comd_height_I=0;
+	last_time=0;
+	first_cruise=false;
+}
+else
+{
+	time_now=tic();
+	dt=time_now-last_time;
+}
+
+cruise_error_height=race_comd_height-jrh_drone->ultrasonic.ranges[0];
+if(dt==0)
+{
+	cruise_comd_height_I=0;
+	cruise_comd_height_D=0;
+}
+else
+{
+	cruise_comd_height_I=cruise_comd_height_I+cruise_height_ki*cruise_error_height*dt;
+	cruise_comd_height_D=cruise_height_kd*(cruise_error_height-cruise_last_error_height)/dt;
+}
+cruise_comd_height_P=cruise_height_kp*cruise_error_height;
+cruise_last_error_height=cruise_error_height;
+last_time=time_now;
+
+race_comd_vz=cruise_comd_height_P+cruise_comd_height_I+cruise_comd_height_D;
+printf("lalaalal  initial_x  %d  initial_y %d\n",remember_parent_x_initial,remember_parent_y_initial);
+if(remember_parent_x_initial==6&&remember_parent_y_initial==6)
+{
+	race_comd_vx=0;
+	race_comd_vy=0;
+}
+else
+{
+	race_comd_vx=cruise_velcity_total*cos(atan2(remember_parent_y_comd-6,remember_parent_x_comd-6));
+	race_comd_vy=cruise_velcity_total*sin(atan2(remember_parent_y_comd-6,remember_parent_x_comd-6));
+}
+
+printf("cruise_cmd_x   %f     cruise_cmd_y  %f cruise_cmd_z %f\n",race_comd_vx,race_comd_vy,race_comd_vz);
+printf("next point   %d   %d  \n",remember_parent_x_comd,remember_parent_y_comd);
+printf("move_direction   %f\n",180*(atan2(remember_parent_y_comd-6,remember_parent_x_comd-6))/PI);
+printf("cruise_total  %f  \n",cruise_velcity_total);
+float comd_vx=race_comd_vx*cvmGet(R_init,0,0)+race_comd_vy*cvmGet(R_init,0,1)+race_comd_vz*cvmGet(R_init,0,2);
+float comd_vy=race_comd_vx*cvmGet(R_init,1,0)+race_comd_vy*cvmGet(R_init,1,1)+race_comd_vz*cvmGet(R_init,1,2);
+float comd_zv=race_comd_vx*cvmGet(R_init,2,0)+race_comd_vy*cvmGet(R_init,2,1)+race_comd_vz*cvmGet(R_init,2,2);
+drone->velocity_control(0x49,comd_vx,comd_vy,comd_zv,0);//注意接下来需要我们对偏航角做出判断
+}
+else
+{
+	printf("----------------Warning take off must!!!!  warning!!!-----------");
+	if(first_cruise)
+	{
+		dt=0;
+		cruise_comd_height_I=0;
+		last_time=0;
+		first_cruise=false;
+	}
+	else
+	{
+		time_now=tic();
+		dt=time_now-last_time;
+	}
+	cruise_error_height=2-jrh_drone->ultrasonic.ranges[0];
+	if(dt==0)
+	{
+		cruise_comd_height_I=0;
+		cruise_comd_height_D=0;
+	}
+	else
+	{
+		cruise_comd_height_I=cruise_comd_height_I+cruise_height_ki*cruise_error_height*dt;
+		cruise_comd_height_D=cruise_height_kd*(cruise_error_height-cruise_last_error_height)/dt;
+	}
+	cruise_comd_height_P=cruise_height_kp*cruise_error_height;
+	cruise_last_error_height=cruise_error_height;
+	last_time=time_now;
+	race_comd_vz=cruise_comd_height_P+cruise_comd_height_I+cruise_comd_height_D;
+	race_comd_vx=0;
+	race_comd_vy=0;
+	float comd_vx=race_comd_vx*cvmGet(R_init,0,0)+race_comd_vy*cvmGet(R_init,0,1)+race_comd_vz*cvmGet(R_init,0,2);
+	float comd_vy=race_comd_vx*cvmGet(R_init,1,0)+race_comd_vy*cvmGet(R_init,1,1)+race_comd_vz*cvmGet(R_init,1,2);
+	float comd_zv=race_comd_vx*cvmGet(R_init,2,0)+race_comd_vy*cvmGet(R_init,2,1)+race_comd_vz*cvmGet(R_init,2,2);
+	drone->velocity_control(0x49,comd_vx,comd_vy,comd_zv,0);//注意接下来需要我们对偏航角做出判断
+}
+
+}//巡航
+
+*/
+
+}
+	   rate.sleep();
+}
+}

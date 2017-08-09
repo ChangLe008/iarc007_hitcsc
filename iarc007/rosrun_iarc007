@@ -1,0 +1,38 @@
+#! /bin/bash
+
+homepath=/home/hitcsc
+wspath=/home/hitcsc/catkin_ws
+ 
+echo "Start_ROS" >> $wspath/log/log.txt
+
+#source $homepath/.bashrc
+source /home/hitcsc/catkin_ws/devel/setup.sh
+sleep 1s
+
+cd $homepath
+
+echo "Launching dji_sdk sdk_manifold.launch..." >> $wspath/log/iarc007_log.txt
+roslaunch dji_sdk sdk_manifold.launch &
+pid=$!
+sleep 3s
+
+echo "Launching guidance guidanceNode..." >> $wspath/log/iarc007_log.txt
+rosrun guidance guidance_pub &
+pid="$pid $!"
+sleep 5s
+
+echo "Launching iarc007 hy_opencv_pub..." >> $wspath/log/iarc007_log.txt
+rosrun iarc007 hy_opencv_pub &
+pid="$pid $!"
+sleep 3s
+
+echo "Launching iarc007 hy_opencv_sub..." >> $wspath/log/iarc007_log.txt
+rosrun iarc007 hy_opencv_sub >> $wspath/log/hy_opencv_sub_log.txt &
+pid="$pid $!"
+sleep 3s
+
+echo "Launching iarc007 jrh..." >> $wspath/log/iarc007_log.txt
+rosrun iarc007 jrh >> $wspath/log/jrh.txt &
+pid=$!
+
+sleep 24h

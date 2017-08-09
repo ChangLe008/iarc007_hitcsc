@@ -1,0 +1,19 @@
+#ifndef _OBJ_UTILITY_H_
+#define _OBJ_UTILITY_H_
+
+
+/**
+* @enum  e_vbus_index
+* @brief Define logical direction of vbus, i.e. the direction of selected Guidance Sensor. Note that they are only defined by the VBUS ports on Guidance Core, not by the Guidance Sensors. The comment of each element indicates the default direction when Guidance is installed on Matrice 100. However the developers can install Guidance in any manner on any device, thus the directions might also be different.
+*/
+enum e_vbus_index
+{
+	e_vbus1 = 1,	/**< front on M100 */
+	e_vbus2 = 2,	/**< right on M100 */
+	e_vbus3 = 3,	/**< rear on M100 */
+	e_vbus4 = 4,	/**< left on M100 */
+	e_vbus5 = 0	    /**< down on M100 */
+};
+
+
+#endif

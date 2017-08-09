@@ -1,0 +1,51 @@
+/*
+ * target.h
+ *
+ *  Created on: 2016年3月13日
+ *      Author: exbot
+ */
+#ifndef TARGET_H_
+#define TARGET_H_
+
+#include "fun.h"
+
+#define MODE_SEARCH 0
+#define MODE_TRACKING 1
+
+#define Img_Width 640
+#define Img_Height 480
+
+typedef struct PICTUREPOINT
+{
+	int u[10];
+	int v[10];
+	int num;
+	double angle;//方向，单位为度
+}PicPoint;
+
+typedef struct POSITIONPOINT
+{
+	double x[10];
+	double y[10];
+	double z[10];
+	double angle[10];//方向，单位为弧度
+	int num;
+
+}PosPoint;
+ 
+extern int frame;
+
+float heidianjiance(IplImage* image,CvPoint2D32f* point,double h,CvMat* R);
+void target(IplImage* img,CvMat* R,double h,PosPoint* point,int mode,IplImage* dst);
+int lunkuodian(IplImage* image,CvPoint2D32f* point,double h,CvMat* R,CvPoint2D32f* contour_point);
+
+//图像处理
+//u对应x，v对应y,cx[],cy[]即为图像处理出的中心点
+void imageprocessing(IplImage* img,PicPoint *picp,double h);
+
+float jiaodianpipei(IplImage* src,CvPoint2D32f* p,CvMat* R,double h);
+//yaw 偏航角， roll  滚转角， pitch 俯仰角,h单位为cm，x,y是在图像中的坐标
+//计算图像坐标到机体坐标系下的位置
+
+
+#endif /* TARGET_H_ */

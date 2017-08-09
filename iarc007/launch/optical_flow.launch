@@ -1,0 +1,18 @@
+<launch>
+	<node pkg="iarc007" type="optical_flow" name="optical_flow" output="screen">
+
+	<!-- Camera topic to subscribe to -->
+	<param name="cam_topic" value="/guidance/left_image" type="str" />
+	<!--param name="cam_topic" value="/iarc007/mono_video" type="str" /> -->
+
+	<!-- Camera calibration file -->
+	<rosparam file="$(find iarc007)/doc/camera_left.yaml"/>
+
+	<!-- Initial camera orientation, make it point downwards -->
+	<!-- <param name="init_rx" value="3.14" /> -->
+	<!-- <param name="init_ry" value="0.00" /> -->
+	<!-- <param name="init_rz" value="0.00" /> -->
+
+	</node>
+
+</launch>

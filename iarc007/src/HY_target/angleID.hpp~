@@ -1,0 +1,44 @@
+#include <ros/ros.h>
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <opencv.hpp>
+
+#define PI 3.1415926
+
+class angleId
+{
+	
+private:
+	int max; //the maximum number of container
+	int num; //the valid number of data
+	bool valid; //is the data flooding
+	std::vector<Point2f> mem; //the container
+	ros::Time current_time; // the time of now
+	ros::Time last_time; // the time of update last time
+	double duration;
+	float r_min; // relativity
+public:
+	float angle; //the motion-direction
+
+	angleID():max(20):num(0):last_time(ros::Time::now()):current_time(ros::time::now):r_min(0.5):duration(1.)
+	{
+		mem.resize(max);
+		angle = 10.;
+	}
+	~angleID();
+
+	bool isFlooding(std::vector<Point2f>& mem); //to check whether the mem > max
+	void update(std::vector<Point2f>& mem,float air_pos[],Point2f point,bool flag); //to get measure data
+	bool estimate(std::vector<Point2f>& mem,float angle); //to estimate the angle
+	void memClear(); // clear mem
+
+	float sumPow(std::vector<Point2f>& mem);
+	float sumMultiply(std::vector<Point2f>& mem);
+	float sum(std::vector<Point2f>& mem,bool flag); //bool = true then sum_x && bool = false then sum_y
+
+	float avg(std::vector<Point2f>& mem,bool flag);
+	float sumDiff(std::vector<Point2f>& mem,bool flag);
+	float sumDiff2(std::vector<Point2f>& mem,bool flag);
+}

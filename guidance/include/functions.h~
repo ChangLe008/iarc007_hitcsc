@@ -1,0 +1,413 @@
+/*
+ * functions.h
+ *
+ *  Created on: 2016年7月26日
+ *      Author: hitcsc
+ */
+
+#ifndef DJI_GUIDANCE_SDK_INCLUDE_FUNCTIONS_H_
+#define DJI_GUIDANCE_SDK_INCLUDE_FUNCTIONS_H_
+#include "GuidanceNodeTest.h"
+using namespace std;
+//********************************************************end
+//ros::Subscriber left_image_sub;
+ros::Subscriber right_image_sub;
+//ros::Subscriber depth_image_sub;
+ros::Subscriber depth_image_sub_0;
+ros::Subscriber depth_image_sub_1;
+ros::Subscriber depth_image_sub_2;
+ros::Subscriber depth_image_sub_3;
+ros::Subscriber depth_image_sub_4;
+
+ros::Subscriber left_image_sub_0;
+ros::Subscriber left_image_sub_1;
+ros::Subscriber left_image_sub_2;
+ros::Subscriber left_image_sub_3;
+ros::Subscriber left_image_sub_4;
+
+ros::Subscriber imu_sub;
+ros::Subscriber velocity_sub;
+ros::Subscriber obstacle_distance_sub;
+ros::Subscriber ultrasonic_sub;
+ros::Subscriber position_sub;
+
+//ros::Publisher obstacle_guidance_pub [5];
+
+char obstacle_guidance_pub_topic[5][100];
+float pub_obstacle_yqt_x[20];
+float pub_obstacle_yqt_y[20];
+int pub_obstacle_count = 0 ;
+
+
+
+
+
+using namespace cv;
+#define WIDTH 320
+#define HEIGHT 240
+#define PAI 3.14159265358979
+const float camera_cu = 154.1;
+const float camera_cv = 118.744;
+const float focal = 251.683;
+const float baseline = 0.150067;
+const float camera_factor=255;
+//float instrin[]={focal,0,camera_cu,0,focal,camera_cu,0,0,1};
+CvMat* intr=cvCreateMat(3,3, CV_32FC1);
+
+using namespace std;
+//******************************************************start
+cv::Mat depthMatShow1(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat depthMatShow1_0(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat depthMatShow1_1(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat depthMatShow1_2(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat depthMatShow1_3(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat depthMatShow1_4(HEIGHT, WIDTH, CV_8UC1);
+
+cv::Mat leftMatShow1(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat  leftMatShow1_0(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat leftMatShow1_1(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat  leftMatShow1_2(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat  leftMatShow1_3(HEIGHT, WIDTH, CV_8UC1);
+cv::Mat  leftMatShow1_4(HEIGHT, WIDTH, CV_8UC1);
+int vbus_num = 0;
+int frame_count=0;
+
+
+
+
+
+Mat src_src;
+float  pub_point_x;
+float pub_point_y;
+float pub_point_z;
+
+//cv_bridge::CvImagePtr cv_ptr;
+//cv_bridge::CvImagePtr cv_ptrl;
+
+float obstacle_delect_x[200];
+float obstacle_delect_y[200];
+float obstacle_delect_z[200];
+float depth_point_real_word[3];
+float camera_point_real_word[3];
+bool jiaozheng=true;
+
+
+//********************************************************end
+
+//********************************************************
+ros::Subscriber attitude_quaternion_subscriber;
+iarc007::obstacle yqt;
+float yaw,roll,pitch;
+/*
+ * chess_R_ca  biao ding ban dao camera
+ */
+CvMat *chess_R_ca;//3*3
+/*
+ * body_R_chess
+ */
+CvMat *body_R_chess;//3*3
+CvMat*saidong_R_chess;//3*3
+CvMat*saidong_R_ca;
+/*
+ * saidong_R_body
+ */
+CvMat *saidong_R_body;//3*3   =saidong_R_earth*earth_R_body
+/*
+ *body_R_earth
+ */
+CvMat *earth_R_body;//3*3
+/*
+ * saidong_R_earth
+ */
+CvMat *saidong_R_earth;//3*3
+CvMat *earth_R_saidong;//3*3
+/*
+ *height_zy ningjin668899
+  */
+float height_zy;
+ //     float h_get;
+
+CvMat* q_att_zy; //4×1
+CvMat* att_zy; //3×1
+
+void Quaternion_To_Euler(CvMat *q_att, CvMat *att);
+
+void Euler_To_Matrix(float roll, float pitch, float yaw, CvMat *R);
+
+float Low_Pass(float h);
+
+void attitude_quaternion_subscriber_callback(dji_sdk::AttitudeQuaternion attitude_quaternion);
+
+void transform_point_to_real(float to_point[3], const CvMat* extrinsic, const float from_point[3]);
+
+void Dilation( Mat src, int dilation_size );
+
+void Erosion(Mat src,int erosion_size);
+
+void Quaternion_To_Euler(CvMat *q_att, CvMat *att)
+{
+		float r11,r12,r21,r31,r32,r1,r2,r3;
+		float q[4] = { cvmGet(q_att,0,0),  cvmGet(q_att,1,0), cvmGet(q_att,2,0), cvmGet(q_att,3,0)};
+    	r11 = 2.0f *(q[1] * q[2] + q[0] * q[3]);
+    	r12 = q[0] * q[0] + q[1] * q[1] - q[2] * q[2]  - q[3] * q[3] ;
+    	r21 = -2.0f * (q[1] * q[3] - q[0] * q[2]);
+    	r31 = 2.0f *( q[2] * q[3] + q[0]  * q[1]);
+    	r32 = q[0] * q[0] - q[1] * q[1]  - q[2] * q[2] + q[3] * q[3] ;
+    	float yaw= atan2( r11, r12 );
+    	float pitch = asin( r21 );
+    	float roll = atan2( r31, r32 );
+    	cvmSet(att, 0, 0, roll);
+    	cvmSet(att, 1, 0, pitch);
+    	cvmSet(att, 2, 0, yaw);
+//printf("%f  \n",asin(r21));
+//printf("%f  \n",r21);
+}
+//euler to matrix  the matrix is from ground to body
+void Euler_To_Matrix(float roll, float pitch, float yaw, CvMat *R)
+{
+	float cp = cosf(pitch);
+	float sp = sinf(pitch);
+	float sr = sinf(roll);
+	float cr = cosf(roll);
+	float sy = sinf(yaw);
+	float cy = cosf(yaw);
+
+	cvmSet(R,0, 0,cp * cy);
+	cvmSet(R,0, 1, ((sr * sp * cy) - (cr * sy)));
+	cvmSet(R,0, 2, ((cr * sp * cy) + (sr * sy)));
+	cvmSet(R,1, 0, (cp * sy));
+	cvmSet(R,1,1, ((sr * sp * sy) + (cr * cy)));
+	cvmSet(R,1, 2, ( (cr * sp * sy) - (sr * cy)));
+	cvmSet(R,2, 0,  -sp);
+	cvmSet(R,2, 1,  sr * cp);
+	cvmSet(R,2, 2,  cr * cp);
+//printf("%f	%f	%f\n",cvmGet(R,0,0),cvmGet(R,0,1),cvmGet(R,0,2));
+
+}
+
+extern float last_height_fusion_1[3]={0.0f};
+extern float last_height_original_1[4]={0.0f};
+extern int height_count_original_1=0;
+extern int height_count_fusion_1=0;
+extern bool low_pass_flag1_1=true;
+extern bool low_pass_flag2_1=true;
+//extern float  h;
+
+float Low_Pass(float h)
+{
+	float a1=1,a2= -2.4803,a3=2.0872,a4=-0.5930;
+	float b1=0.0017,b2= 0.0052,b3= 0.0052,b4=0.0017;
+
+	if(height_count_fusion_1==3)
+	{
+		low_pass_flag2_1=false;
+	}
+
+	//////////////////////////////////////////////////////////////////////////////实现归零的功能
+	if(height_count_original_1==4)
+	{
+		height_count_original_1=0;
+	}
+	if(height_count_fusion_1==3)
+	{
+		height_count_fusion_1=0;
+	}
+//////////////////////////////////////////////////////////////////////////////用来判断是不是前两次为了第一次滤波准备
+
+	 //printf("%f %f %f %f %f %f %f %f\n",a1,a2,a3,a4,b1,b2,b3,b4);
+	last_height_original_1[height_count_original_1]=h;
+
+	if(height_count_original_1==2)
+	{
+		low_pass_flag1_1=false;
+	}
+//////////////////////////////////////////////////////////////////////////////当标志位为可以滤波的标志的时候开始初步第一次滤波
+	/*
+	if((low_pass_flag1_1==0))
+	{
+		if(height_count_original_1==0)
+		{
+			if(fabs(last_height_original_1[0]-last_height_original_1[3])>0.3)
+			{
+				last_height_original_1[0]=(last_height_original_1[3]+last_height_original_1[2])*0.5;
+			}
+		}
+		else if(height_count_original_1==1)
+		{
+			if(fabs(last_height_original_1[1]-last_height_original_1[0])>0.3)
+			{
+				last_height_original_1[1]=(last_height_original_1[0]+last_height_original_1[3])*0.5;
+			}
+		}
+		else if(height_count_original_1==2)
+		{
+			if(fabs(last_height_original_1[2]-last_height_original_1[1])>0.3)
+			{
+				last_height_original_1[2]=(last_height_original_1[1]+last_height_original_1[0])*0.5;
+			}
+		}
+		else if(height_count_original_1==3)
+		{
+			if(fabs(last_height_original_1[3]-last_height_original_1[2])>0.3)
+			{
+				last_height_original_1[3]=(last_height_original_1[2]+last_height_original_1[1])*0.5;
+			}
+		}
+	}
+	*/
+///////////////////////////////////////////////////////////////////////////////////////////////////利用标志位判断是不是第一次进入第二次的滤波
+
+	if(low_pass_flag2_1)
+	{
+		//printf("bbb---if-----bb\n");
+		if(height_count_fusion_1==0)
+		{
+			last_height_fusion_1[0]=b1*last_height_original_1[0];
+		}
+		if(height_count_fusion_1==1)
+		{
+			last_height_fusion_1[1]=b1*last_height_original_1[1]+b2*last_height_original_1[0]-a2*last_height_fusion_1[0];
+		}
+		if(height_count_fusion_1==2)
+		{
+			last_height_fusion_1[2]=b1*last_height_original_1[2]+b2*last_height_original_1[1]+b3*last_height_original_1[0]-a2*last_height_fusion_1[1]-a3*last_height_fusion_1[0];
+		}
+	}
+	else
+	{
+		 //printf("aaaa---else ---\n");
+		if(height_count_fusion_1==0&&height_count_original_1==0)
+		{
+			last_height_fusion_1[0]=b1*last_height_original_1[0]+b2*last_height_original_1[3]+b3*last_height_original_1[2]+b4*last_height_original_1[1]-a2*last_height_fusion_1[2]-a3*last_height_fusion_1[1]-a4*last_height_fusion_1[0];
+		}
+		if(height_count_fusion_1==0&&height_count_original_1==1)
+		{
+			last_height_fusion_1[0]=b1*last_height_original_1[1]+b2*last_height_original_1[0]+b3*last_height_original_1[3]+b4*last_height_original_1[2]-a2*last_height_fusion_1[2]-a3*last_height_fusion_1[1]-a4*last_height_fusion_1[0];
+		}
+		if(height_count_fusion_1==0&&height_count_original_1==2)
+		{
+			last_height_fusion_1[0]=b1*last_height_original_1[2]+b2*last_height_original_1[1]+b3*last_height_original_1[0]+b4*last_height_original_1[3]-a2*last_height_fusion_1[2]-a3*last_height_fusion_1[1]-a4*last_height_fusion_1[0];
+		}
+		if(height_count_fusion_1==0&&height_count_original_1==3)
+		{
+			last_height_fusion_1[0]=b1*last_height_original_1[3]+b2*last_height_original_1[2]+b3*last_height_original_1[1]+b4*last_height_original_1[0]-a2*last_height_fusion_1[2]-a3*last_height_fusion_1[1]-a4*last_height_fusion_1[0];
+		}
+
+		if(height_count_fusion_1==1&&height_count_original_1==0)
+		{
+			last_height_fusion_1[1]=b1*last_height_original_1[0]+b2*last_height_original_1[3]+b3*last_height_original_1[2]+b4*last_height_original_1[1]-a2*last_height_fusion_1[0]-a3*last_height_fusion_1[2]-a4*last_height_fusion_1[1];
+		}
+		if(height_count_fusion_1==1&&height_count_original_1==1)
+		{
+			last_height_fusion_1[1]=b1*last_height_original_1[1]+b2*last_height_original_1[0]+b3*last_height_original_1[3]+b4*last_height_original_1[2]-a2*last_height_fusion_1[0]-a3*last_height_fusion_1[2]-a4*last_height_fusion_1[1];
+		}
+		if(height_count_fusion_1==1&&height_count_original_1==2)
+		{
+			last_height_fusion_1[1]=b1*last_height_original_1[2]+b2*last_height_original_1[1]+b3*last_height_original_1[0]+b4*last_height_original_1[3]-a2*last_height_fusion_1[0]-a3*last_height_fusion_1[2]-a4*last_height_fusion_1[1];
+		}
+		if(height_count_fusion_1==1&&height_count_original_1==3)
+		{
+			last_height_fusion_1[1]=b1*last_height_original_1[3]+b2*last_height_original_1[2]+b3*last_height_original_1[1]+b4*last_height_original_1[0]-a2*last_height_fusion_1[0]-a3*last_height_fusion_1[2]-a4*last_height_fusion_1[1];
+		}
+
+
+		if(height_count_fusion_1==2&&height_count_original_1==0)
+		{
+			last_height_fusion_1[2]=b1*last_height_original_1[0]+b2*last_height_original_1[3]+b3*last_height_original_1[2]+b4*last_height_original_1[1]-a2*last_height_fusion_1[1]-a3*last_height_fusion_1[0]-a4*last_height_fusion_1[2];
+		}
+		if(height_count_fusion_1==2&&height_count_original_1==1)
+		{
+			last_height_fusion_1[2]=b1*last_height_original_1[1]+b2*last_height_original_1[0]+b3*last_height_original_1[3]+b4*last_height_original_1[2]-a2*last_height_fusion_1[1]-a3*last_height_fusion_1[0]-a4*last_height_fusion_1[2];
+		}
+		if(height_count_fusion_1==2&&height_count_original_1==2)
+		{
+			last_height_fusion_1[2]=b1*last_height_original_1[2]+b2*last_height_original_1[1]+b3*last_height_original_1[0]+b4*last_height_original_1[3]-a2*last_height_fusion_1[1]-a3*last_height_fusion_1[0]-a4*last_height_fusion_1[2];
+		}
+		if(height_count_fusion_1==2&&height_count_original_1==3)
+		{
+			last_height_fusion_1[2]=b1*last_height_original_1[3]+b2*last_height_original_1[2]+b3*last_height_original_1[1]+b4*last_height_original_1[0]-a2*last_height_fusion_1[1]-a3*last_height_fusion_1[0]-a4*last_height_fusion_1[2];
+		}
+	}
+	//printf("original3    %d     fusion2    %d    height    %f\n",height_count_original_1,height_count_fusion_1,last_height_fusion_1[height_count_fusion_1]);
+	float y=last_height_fusion_1[height_count_fusion_1];
+	height_count_original_1=height_count_original_1+1;
+	height_count_fusion_1=height_count_fusion_1+1;
+
+	h = y;
+
+return y;
+}
+
+void attitude_quaternion_subscriber_callback(dji_sdk::AttitudeQuaternion attitude_quaternion)
+{
+//        attitude_quaternion = attitude_quaternion;
+
+    cvmSet(q_att_zy,0,0,attitude_quaternion.q0);
+    cvmSet(q_att_zy,1,0,attitude_quaternion.q1);
+    cvmSet(q_att_zy,2,0,attitude_quaternion.q2);
+    cvmSet(q_att_zy,3,0,attitude_quaternion.q3);
+// printf("aerial pilot : %f %f %f %f\n",attitude_quaternion.q0,attitude_quaternion.q1,attitude_quaternion.q2,attitude_quaternion.q3);
+    Quaternion_To_Euler(q_att_zy, att_zy);
+
+    roll = cvmGet(att_zy,0,0);
+    pitch = cvmGet(att_zy,1,0);
+    yaw = cvmGet(att_zy,2,0);
+    //printf("++++++++%f\t%f\t%f\n",yaw,roll,pitch);
+
+    /*	R_g_b coming from aerial pilot indicates transformation from ground to body (All observe left-multiply principle)	*/
+      Euler_To_Matrix(roll,pitch,yaw,earth_R_body);
+
+    /*	R_g_cz coming from initial calibration indicates tramsformation from ground to competition zone(All observe left-multiply principle)*/
+       cvTranspose(earth_R_saidong,saidong_R_earth);
+        /*	R_cz_b indicates transformation from competition zone to body(All observe left-multiply principle)	*/
+    //cvGEMM(saidong_R_earth,earth_R_body,1,NULL,0,saidong_R_body);
+  //  cvGEMM(saidong_R_body,body_R_chess,1,NULL,0,saidong_R_chess);
+  //  cvGEMM(saidong_R_chess,chess_R_ca,1,NULL,0,saidong_R_ca);
+}
+
+void transform_point_to_real(float to_point[3], const CvMat* extrinsic, const float from_point[3])
+    {
+        to_point[0] = cvmGet(extrinsic,0,0) * from_point[0] +cvmGet(extrinsic,0,1) * from_point[1] + cvmGet(extrinsic,0,2) * from_point[2];
+        to_point[1] = cvmGet(extrinsic,1,0) * from_point[0] +cvmGet(extrinsic,1,1) * from_point[1] + cvmGet(extrinsic,1,2) * from_point[2];
+        to_point[2] = cvmGet(extrinsic,2,0) * from_point[0] +cvmGet(extrinsic,2,1) * from_point[1] + cvmGet(extrinsic,2,2) * from_point[2];
+        //cvReleaseMat(&extrinsic);
+    }
+//************************************************************************
+
+void Erosion(Mat src,int erosion_size)
+{
+  int erosion_type=0;
+  int erosion_elem=0;
+  Mat erosion_dst;
+  if( erosion_elem == 0 ){ erosion_type = MORPH_RECT; }
+  else if( erosion_elem == 1 ){ erosion_type = MORPH_CROSS; }
+  else if( erosion_elem == 2) { erosion_type = MORPH_ELLIPSE; }
+
+  Mat element = getStructuringElement( erosion_type,
+                                       Size( 2*erosion_size + 1, 2*erosion_size+1 ),
+                                       Point( erosion_size, erosion_size ) );
+
+  /// 腐蚀操作
+  erode( src, src, element );
+ // imshow( "Erosion Demo", src );
+}
+
+/** @function Dilation */
+
+void Dilation( Mat src, int dilation_size )
+{
+  int dilation_type=0;
+  int dilation_elem = 0;
+  Mat dilation_dst;
+  if( dilation_elem == 0 ){ dilation_type = MORPH_RECT; }
+  else if( dilation_elem == 1 ){ dilation_type = MORPH_CROSS; }
+  else if( dilation_elem == 2) { dilation_type = MORPH_ELLIPSE; }
+
+  Mat element = getStructuringElement( dilation_type,
+                                       Size( 2*dilation_size + 1, 2*dilation_size+1 ),
+                                       Point( dilation_size, dilation_size ) );
+  ///膨胀操作
+  dilate( src, src, element );
+  //imshow( "Dilation Demo", src );
+}
+#endif /* DJI_GUIDANCE_SDK_INCLUDE_FUNCTIONS_H_ */

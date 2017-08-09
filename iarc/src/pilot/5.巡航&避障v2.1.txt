@@ -1,0 +1,455 @@
+/*v1.0: 2017.07.05, 王宁远, 巡航避障框架搭建*/
+/*v1.1: 2017.07.12, 王宁远, 巡航避障功能添加*/
+/*v1.2: 2017.07.15, 王宁远, 巡航避障功能继续添加*/
+/*v2.0: 2017.07.21, 王宁远, 整合简化版巡航程序*/
+/*v2.1: 2017.07.23, 王宁远, 整合简化版巡航程序（带障碍物）*/
+/*程序功能：有四个移动障碍物，无定位信息，有边界信息情况下的持续巡航*/
+/*所有变量均定义在赛场动坐标系下*/
+/*位置变量单位为m，速度变量单位为m/s，加速度变量单位为m/s2，时间变量单位为s，角度变量单位为rad*/
+
+
+
+
+/*第1部分：变量定义及初始化*/
+//二维巡航速度
+float wny_tar_vx=0.0;
+float wny_tar_vy=0.0;
+float wny_tar_velocity=0.25;
+double wny_theta=0.0;		//方向角区间为[-π,π)，初始值0
+
+//二维避障速度
+float wny_obs_vx[3]={0.0,0.0,0.0,0.0};
+float wny_obs_vy[3]={0.0,0.0,0.0,0.0};
+float wny_obstacle_vx=0.0;
+float wny_obstacle_vy=0.0;
+
+//飞行器速度，加速度与速度方向
+double wny_quad_vx=0.0;
+double wny_quad_vy=0.0;
+float wny_quad_vz=0.0;
+float wny_quad_vyaw=0.0;
+float wny_quad_vx_last=0.0;
+float wny_quad_vy_last=0.0;
+float wny_quad_ax=0.0;
+float wny_quad_ay=0.0;
+double wny_quad_theta=0.0;
+
+//速度限幅与加速度限幅
+float wny_quad_vx_limitation=0.45;
+float wny_quad_vy_limitation=0.45;
+float wny_quad_vz_limitation=0.3;
+float wny_quad_vyaw_limitation=45.0;
+float wny_quad_ax_limitation=1.2;
+float wny_quad_ay_limitation=1.2;
+
+//避障运算
+float wny_obs_limit_first=2.0;
+float wny_obs_limit_second=1.6;
+float wny_obs_limit_dangerous=1.2;
+
+//边界检测
+int wny_side_check=4;		//0表示绿边，1表示右白边，2表示红边，3表示左白边（顺时针），4表示无效标志位
+int wny_side_corner=2;		//0表示在边附近，1表示在角附近，2表示既不在边附近又不在角附近
+
+int wny_side_flag=0;		//0表示不在边界附近，1表示在边界附近(1条边界)，2表示在边界附近(2条边界)，假设在边界附近已经有距离阈值，也就是距离缩短到某一范围以内，从0变为1或2
+int wny_side_flag_last=0;
+float wny_side_flag_sum=0.0;
+float wny_side_flag_mean=0.0;
+float wny_side_first=0.0;
+float wny_side_second=0.0;
+int wny_side_filter=0;
+int wny_side_count=0;
+int wny_side_judge=0;
+int wny_side_stay=0;		//0表示清零状态，1表示保持状态
+
+//高度测量
+float wny_quad_height=0.0;				//高度数据的原始读取值
+float wny_quad_hfilter[5]={0.08,0.08,0.08,0.08,0.08,0.08};	//高度中值滤波的数据存储值（存6次数据，初始值考虑飞行器停在地面上，取0.08，为8cm）
+float wny_quad_htemp=0.0;
+float wny_quad_posz=0.0;
+float wny_quad_poszmax=1.25;
+float wny_quad_poszmin=1.20;
+
+//障碍物信息（默认障碍物信息已经融合完成）
+int wny_obs_number=0;		//最小为0，最大为4
+float wny_obs_rela_posx[3]={10.0,10.0,10.0,10.0};
+float wny_obs_rela_posy[3]={10.0,10.0,10.0,10.0};
+float wny_obs_rela_pos[3]={14.1,14.1,14.1,14.1};
+float wny_obs_tempx=0.0;
+float wny_obs_tempy=0.0;
+
+
+/*第2部分：循环运算*/
+ros::Rate m(50);
+while(ros::ok())
+{
+	/*chapter1：数据读取*/
+	//高度测量
+	wny_quad_height=   ;		
+	//边界检测
+	wny_side_check=    ;		
+	wny_side_corner=    ;		
+	//前一帧速度
+	wny_quad_vx_last=wny_quad_vx;	
+	wny_quad_vy_last=wny_quad_vy;	
+	//障碍物信息
+	wny_obs_number=  ;	
+	for(int i=0;i<wny_obs_number;i++)	//赋真实值
+	{
+		wny_obs_rela_posx[i]=    ;
+		wny_obs_rela_posy[i]=    ;
+	}
+	for(int i=0;i<(4-wny_obs_number);i++)	//赋安全值（与障碍物相对距离10m）
+	{
+		wny_obs_rela_posx[wny_obs_number+i]=10.0;
+		wny_obs_rela_posy[wny_obs_number+i]=10.0;
+	}
+	
+	/*chapter2：信号处理*/
+	/*part1：边界信息滤波*/
+	//首先根据边界信息特性，确定是否需要滤波（目前暂时不使用）
+	//均值滤波，进行读取标志位变化后的一段滤波判断，如果均值更接近于变化后的值，则取后者，否则取前者（在不变的时候保持上一次的赋值，在初始的时候为0）
+	if((wny_side_flag!=wny_side_flag_last)&&wny_side_filter==0)	//两时刻之间读取的值不等，则进入均值滤波判断（可能是真实变化，也可能是检测噪声）
+	{
+		wny_side_filter=1;
+		wny_side_first=wny_side_flag_last;
+		wny_side_second=wny_side_flag;
+	}
+	if(wny_side_filter==1)			//均值滤波，存储10次数据判断，频率50Hz，耗时0.2s（次数越大，越准确，同时越慢）
+	{
+		if(wny_side_count<10)		//取10次数据加和
+		{
+			wny_side_count++;
+			wny_side_flag_sum=wny_side_flag_sum+wny_side_flag;	//当读取值不同时，从新值开始计数
+		}
+		if(wny_side_count==10)		//取10次数据均值，并比较，选取边界信息标志位的使用值
+		{
+			wny_side_flag_mean=wny_side_flag_sum/10.0;
+			if(fabs(wny_side_flag_mean-wny_side_first)<=fabs(wny_side_flag_mean-wny_side_second))		//如果均值离上一时刻的值更近，则取上一时刻的值为使用值
+			{
+				wny_side_judge=wny_side_first;
+			}
+			else if(fabs(wny_side_flag_mean-wny_side_first)>fabs(wny_side_flag_mean-wny_side_second))	//如果均值离这一时刻的值更近，则取这一时刻的值为使用值
+			{
+				wny_side_judge=wny_side_second;
+			}
+			wny_side_filter=0;	//当完成10次计数的均值滤波后，将滤波标志位置0,将计数标志位置0，读取数据加和置0，可以再次进行其后的判断
+			wny_side_count=0;
+			wny_side_flag_sum=0.0;
+		}
+	}
+	wny_side_flag_last=wny_side_flag;	//存取上一时刻的读取标志位
+
+	/*part2：高度信息滤波*/
+	//首先根据高度信息特性，确定是否需要滤波（目前暂时使用）
+	//中值滤波，去除噪声点，平滑输入，6组数据中值滤波，延时0.12s（高度信息均为正）	
+	for(int i=5;i>0;i--)		//顺序存储读取的原始数据（移位寄存器）
+	{
+		wny_quad_hfilter[i]=wny_quad_hfilter[i-1];
+	}
+	wny_quad_hfilter[0]=wny_quad_height;
+	for(int i=0;i<5;i++)		//由前至后，从小到大排序6组数据
+	{
+		for(int j=(i+1);j<6;j++)
+		{
+			//如果靠前的数值大于靠后的，则二者交换
+			if(wny_quad_hfilter[i]>=wny_quad_hfilter[j])
+			{
+				wny_quad_htemp=wny_quad_hfilter[i];
+				wny_quad_hfilter[i]=wny_quad_hfilter[j];
+				wny_quad_hfilter[j]=wny_quad_htemp;
+			}
+		}
+	}
+	wny_quad_posz=(wny_quad_hfilter[2]+wny_quad_hfilter[3])/2.0;	//取数列中间两个数据的平均值
+
+	/*part3：障碍物距离排序*/
+	//排序后，按序号从小到大，相对距离依次增大，障碍物不足4个时，后面多余的数据均为10.0
+	if(wny_obs_number>1)		//当障碍物数量大于1时，排序有意义，进行排序
+	{
+		for(int i=0;i<(wny_obs_number-1);i++)	//循环处理每个有效障碍物信息
+		{
+			for(int j=(i+1);j<wny_obs_number;j++)
+			{
+				//如果前大后小，则交换二者数值
+				if((wny_obs_rela_posx[j]*wny_obs_rela_posx[j]+wny_obs_rela_posy[j]*wny_obs_rela_posy[j])<=(wny_obs_rela_posx[i]*wny_obs_rela_posx[i]+wny_obs_rela_posy[i]*wny_obs_rela_posy[i]))	
+				{
+					wny_obs_tempx=wny_obs_rela_posx[j];
+					wny_obs_tempy=wny_obs_rela_posy[j];
+					wny_obs_rela_posx[j]=wny_obs_rela_posx[i];
+					wny_obs_rela_posy[j]=wny_obs_rela_posy[i];
+					wny_obs_rela_posx[i]=wny_obs_tempx;
+					wny_obs_rela_posy[i]=wny_obs_tempy;
+				}			
+			}
+		}
+	}
+	
+	/*chapter3：速度计算*/
+	/*part1：巡航速度*/
+	wny_tar_vx=wny_tar_velocity*cos(wny_theta);
+	wny_tar_vy=wny_tar_velocity*sin(wny_theta);
+	
+	/*part2：边界约束*/
+	//第1层逻辑：判断位于边或角，选取反向移动或者旋转一定角度
+	//第2层逻辑：判断位于哪一条边，结合飞行器速度方向（wny_quad_theta）选取旋转角度的取值
+	//角度保持逻辑：角度保持标志位为0，并遇到边或角，进行旋转同时将标志位置1，保持旋转后角度，当不在边或角附近，且角度保持标志位为1，将角度保持标志位置0，可以在遇到边或角的时候再次进行旋转
+	//角度限幅逻辑：限制角度始终在[-π,π)区间内
+	//考虑要不要在初始的一段时间内不进行边界约束处理，防止巡航速度方向角大幅度变化
+	if(wny_side_corner==0&&wny_side_stay==0)		//在边附近，角度保持标志位为0（清零），旋转角度，将角度保持标志位置1（保持），保持住旋转后的角度
+	{
+		if(wny_side_check==0)		//绿边附近
+		{
+			if(wny_quad_theta>=0&&wny_quad_theta<3.14)		//飞行器速度方向指向场内，不旋转
+			{
+			}
+			else if(wny_quad_theta>=-1.57&&wny_quad_theta<0)	//飞行器速度方向指向场外，x正向，角度加120度
+			{
+				wny_theta=wny_theta+2.09;
+			}
+			else if(wny_quad_theta>=-3.14&&wny_quad_theta<-1.57)	//飞行器速度方向指向场外，x负向，角度减120度
+			{
+				wny_theta=wny_theta-2.09;
+			}
+		}
+		else if(wny_side_check==1)	//右白边附近
+		{
+			if((wny_quad_theta>=-3.14&&wny_quad_theta<-1.57)||(wny_quad_theta<3.14&&wny_quad_theta>=1.57))		//飞行器速度方向指向场内，不旋转
+			{
+			}
+			else if(wny_quad_theta>=0&&wny_quad_theta<1.57)		//飞行器速度方向指向场外，y正向，角度加120度
+			{
+				wny_theta=wny_theta+2.09;
+			}
+			else if(wny_quad_theta>=-1.57&&wny_quad_theta<0)	//飞行器速度方向指向场外，y负向，角度减120度
+			{
+				wny_theta=wny_theta-2.09;
+			}
+		}
+		else if(wny_side_check==2)	//红边附近
+		{
+			if(wny_quad_theta>=-3.14&&wny_quad_theta<0)		//飞行器速度方向指向场内，不旋转
+			{
+			}
+			else if(wny_quad_theta>=0&&wny_quad_theta<1.57)		//飞行器速度方向指向场外，x正向，角度减120度
+			{
+				wny_theta=wny_theta-2.09;
+			}
+			else if(wny_quad_theta>=1.57&&wny_quad_theta<3.14)	//飞行器速度方向指向场外，x负向，角度加120度
+			{
+				wny_theta=wny_theta+2.09;
+			}
+		}
+		else if(wny_side_check==3)	//左白边附近
+		{
+			if(wny_quad_theta>=-1.57&&wny_quad_theta<1.57)		//飞行器速度方向指向场内，不旋转
+			{
+			}
+			else if(wny_quad_theta>=-3.14&&wny_quad_theta<-1.57)	//飞行器速度方向指向场外，y负向，角度加120度
+			{
+				wny_theta=wny_theta+2.09;
+			}
+			else if(wny_quad_theta>=1.57&&wny_quad_theta<3.14)	//飞行器速度方向指向场外，y正向，角度减120度
+			{
+				wny_theta=wny_theta-2.09;
+			}
+		}
+		wny_side_stay=1;
+	}
+	else if(wny_side_corner==1&&wny_side_stay==0)		//在角附近，角度保持标志位为0（清零），旋转角度，将角度保持标志位置1（保持），保持住旋转后的角度
+	{
+		wny_theta=wny_theta+3.14;	//反向移动，即旋转180度
+		wny_side_stay=1;
+	}
+	if(wny_side_corner==2&&wny_side_stay==1)		//当脱离边或角附近时（附近没有边也没有角），此时将角度保持标志位从1置0，可以再次旋转角度
+	{
+		wny_side_stay=0;	
+	}
+	if(wny_theta>=3.14)			//角度限幅
+	{
+		wny_theta=wny_theta-6.28;
+	}
+	else if(wny_theta<-3.14)
+	{
+		wny_theta=wny_theta+6.28;
+	}
+
+	/*part3：避障速度*/
+	//注意：障碍物的相对位置是一个由飞行器指向障碍物的矢量，因此在计算避障速度的时候均要添加负号，以实现飞行器远离障碍物
+	for(int i=0;i<4;i++)	//计算四个障碍物对应的排斥速度
+	{
+		wny_obs_rela_pos[i]=sqrt(wny_obs_rela_posx[i]*wny_obs_rela_posx[i]+wny_obs_rela_posy[i]*wny_obs_rela_posy[i])
+		if(wny_obs_rela_pos[i]>wny_obs_limit_first)	//大于2.0m，不进行避障
+		{
+			wny_obs_vx[i]=0.0;
+			wny_obs_vy[i]=0.0;
+		}
+		else if((wny_obs_rela_pos[i]>wny_obs_limit_second)&&(wny_obs_rela_pos[i]<=wny_obs_limit_first))	//大于1.6m小于2.0m，匀速低速避障
+		{
+			wny_obs_vx[i]=-0.45*wny_obs_rela_posx[i]/wny_obs_rela_pos[i];
+			wny_obs_vy[i]=-0.45*wny_obs_rela_posy[i]/wny_obs_rela_pos[i];
+		}
+		else if((wny_obs_rela_pos[i]>wny_obs_limit_dangerous)&&(wny_obs_rela_pos[i]<=wny_obs_limit_second))	//大于1.2m小于1.6m，变速避障
+		{
+			wny_obs_vx[i]=-(0.45+(1.6-wny_obs_rela_pos[i])*1.875)*wny_obs_rela_posx[i]/wny_obs_rela_pos[i];
+			wny_obs_vy[i]=-(0.45+(1.6-wny_obs_rela_pos[i])*1.875)*wny_obs_rela_posy[i]/wny_obs_rela_pos[i];
+		}
+		else if(wny_obs_rela_pos[i]<=wny_obs_limit_dangerous)	//小于1.2m，匀速高速避障
+		{
+			wny_obs_vx[i]=-1.2*wny_obs_rela_posx[i]/wny_obs_rela_pos[i];
+			wny_obs_vy[i]=-1.2*wny_obs_rela_posy[i]/wny_obs_rela_pos[i];
+		}
+	}
+	wny_obstacle_vx=wny_obs_vx[0]+wny_obs_vx[1]+wny_obs_vx[2]+wny_obs_vx[3];	//计算合成排斥速度
+	wny_obstacle_vy=wny_obs_vy[0]+wny_obs_vy[1]+wny_obs_vy[2]+wny_obs_vy[3];
+
+	/*特殊情况列举和处理（目前只进行二维环绕巡航避障，不考虑三维（主要指加入高度）的巡航避障）*/
+	/*目前主要以障碍物个数及其分布情况进行分类*/
+	/*特殊情况处理分两部分更新：1.情况分类及处理方法；2.处理方法中的具体参数设置*/
+	/*特殊情况处理暂时不放在测试中，先测试单障碍物或双障碍物（一动一静）的巡航测试，再慢慢加入特殊情况处理进行测试*/
+	/*condition1：单障碍物*/
+	//目标（或巡航）速度被障碍物挡住，则加入另一个方向的避障速度，从侧面绕开障碍物
+	if((wny_obs_number==1)&&(fabs(wny_obs_vx[0]+wny_tar_vx)<0.05)&&(fabs(wny_obs_vy[0]+wny_tar_vy)<0.05))	//为修改方便，直接赋给阈值
+	{
+		//添加一个0.7倍，逆时针旋转90度的原始避障速度，合成为新的避障速度
+		wny_obstacle_vx=wny_obstacle_vx+0.7*wny_obs_vy[0];
+		wny_obstacle_vy=wny_obstacle_vy-0.7*wny_obs_vx[0];
+	}
+
+	/*condition2：双障碍物*/
+	//两个障碍物速度近似反向，则加入另一个方向的避障速度，防止出现往复振荡，或障碍物不起作用的情况
+	if((wny_obs_number==2)&&(fabs(wny_obs_vx[0]+wny_obs_vx[1])<0.05)&&(fabs(wny_obs_vy[0]+wny_obs_vy[1])<0.05))	//为修改方便，直接赋给阈值
+	{
+		//添加一个0.6倍，逆时针旋转90度的障碍物1原始避障速度，合成为新的避障速度
+		wny_obstacle_vx=wny_obstacle_vx+0.6*wny_obs_vy[0];
+		wny_obstacle_vy=wny_obstacle_vy-0.6*wny_obs_vx[0];
+	}	
+
+	/*condition3：三障碍物*/
+	//三角形包围，只有在等边情况下才会出现平衡点，无法脱离，不过考虑障碍物在持续运动，因此目前先将目标速度置零，依靠避障速度脱离包围
+	if((wny_obs_number==3)&&(fabs(wny_obstacle_vx)<0.05)&&(fabs(wny_obstacle_vy)<0.05))
+	{
+		wny_tar_vx=0.0;
+		wny_tar_vy=0.0;
+	}	
+
+	/*condition4：四障碍物*/
+	//四边形包围：只在正方形情况下才会出现平衡点，无法脱离，不过考虑障碍物在持续运动，因此目前先将目标速度置零，依靠避障速度脱离包围
+	if((wny_obs_number==4)&&(fabs(wny_obstacle_vx)<0.05)&&(fabs(wny_obstacle_vy)<0.05))
+	{
+		wny_tar_vx=0.0;
+		wny_tar_vy=0.0;
+	}
+	
+	/*condition5：局部极小点*/
+	//局部极小点，指速度相互抵消时，飞行器“卡在”某一位置，且难以运动脱离此位置的情况（包括障碍物1个2个3个4个的情况）
+	//从x与y两个维度判断，如果任一维度巡航速度较大而飞行器速度较小，则提高避障速度，脱离局部极小点
+	if(fabs(wny_quad_vx)<wny_quad_vx_min&&fabs(wny_tar_vx)>wny_tar_vx_max)
+	{
+		wny_obstacle_vx=1.2*wny_obstacle_vx;
+	}
+	else
+	{
+	} 
+	if(fabs(wny_quad_vy)<wny_quad_vy_min&&fabs(wny_tar_vy)>wny_tar_vy_max)
+	{
+		wny_obstacle_vy=1.2*wny_obstacle_vy;
+	}
+	else
+	{
+	}
+	//待解决问题：如何进行边界约束与障碍物约束的联合考虑
+
+	/*part4：水平速度*/
+	//目前两类速度，第一类为巡航速度，第二类为避障速度
+	wny_quad_vx=(double)wny_tar_vx+wny_obstacle_vx;	//计算水平速度
+	wny_quad_vy=(double)wny_tar_vy+wny_obstacle_vy;
+	wny_quad_theta=atan2(wny_quad_vy,wny_quad_vx);	//计算水平速度航向,方向角区间为[-π,π)
+	//待解决问题：怎么同时考虑边界和障碍物约束的这一类特殊情况（应该不是简单将速度加和，考虑如何分情况讨论）
+	
+	/*part5：竖直速度及偏航角速度*/
+	if(wny_quad_posz>wny_quad_poszmax)	//具体数值可调节
+	{
+		wny_quad_vz=-0.05;
+	}
+	else if(wny_quad_posz<wny_quad_poszmin)
+	{
+		wny_quad_vz=0.05;
+	}
+	else
+	{
+		wny_quad_vz=0.0;
+	}
+	float wny_quad_vyaw=0.0;		//暂定无偏航运动
+
+	/*chapter4：输出限幅*/
+	//先限制加速度，防止抖动；再限制速度，降低危险
+	/*part1：加速度限幅*/
+	wny_quad_ax=(wny_quad_vx-wny_quad_vx_last)/0.02;	//由速度指令计算加速度
+	wny_quad_ay=(wny_quad_vy-wny_quad_vy_last)/0.02;
+	if(wny_quad_ax>wny_quad_ax_limitation)
+	{
+		wny_quad_vx=wny_quad_vx_last+wny_quad_ax_limitation*0.02;
+	}
+	else if(wny_quad_ax<-wny_quad_ax_limitation)
+	{
+		wny_quad_vx=wny_quad_vx_last-wny_quad_ax_limitation*0.02;
+	}
+
+	if(wny_quad_ay>wny_quad_ay_limitation)
+	{
+		wny_quad_vy=wny_quad_vy_last+wny_quad_ay_limitation*0.02;
+	}
+	else if(wny_quad_ay<-wny_quad_ay_limitation)
+	{
+		wny_quad_vy=wny_quad_vy_last-wny_quad_ay_limitation*0.02;
+	}
+	
+	/*part2：速度限幅*/
+	if(wny_quad_vx>wny_quad_vx_limitation)
+	{
+		wny_quad_vx=wny_quad_vx_limitation;
+	}
+	else if(wny_quad_vx<-wny_quad_vx_limitation)
+	{
+		wny_quad_vx=-wny_quad_vx_limitation;
+	}
+
+	if(wny_quad_vy>wny_quad_vy_limitation)
+	{
+		wny_quad_vy=wny_quad_vy_limitation;
+	}
+	else if(wny_quad_vy<-wny_quad_vy_limitation)
+	{
+		wny_quad_vy=-wny_quad_vy_limitation;
+	}
+
+	if(wny_quad_vz>wny_quad_vz_limitation)
+	{
+		wny_quad_vz=wny_quad_vz_limitation;
+	}
+	else if(wny_quad_vz<-wny_quad_vz_limitation)
+	{
+		wny_quad_vz=-wny_quad_vz_limitation;
+	}
+
+	if(wny_quad_vyaw>wny_quad_vyaw_limitation)
+	{
+		wny_quad_vyaw=wny_quad_vyaw_limitation;
+	}
+	else if(wny_quad_vyaw<-wny_quad_vyaw_limitation)
+	{
+		wny_quad_vyaw=-wny_quad_vyaw_limitation;
+	}
+
+	/*chapter5：指令发送*/
+	//三维速度加偏航角速度，在机体系中（需要先从赛场动坐标系转换到机体系）
+	drone->attitude_control( Flight::HorizontalLogic::HORIZONTAL_VELOCITY |
+        			 Flight::VerticalLogic::VERTICAL_VELOCITY |
+        	                 Flight::YawLogic::YAW_PALSTANCE |
+        	                 Flight::HorizontalCoordinate::HORIZONTAL_BODY |			
+        	                 Flight::SmoothMode::SMOOTH_ENABLE,
+        	                 wny_quad_vx,wny_quad_vy,wny_quad_vz,wny_quad_vyaw);
+	m.sleep();
+	ros::spinOnce();
+}

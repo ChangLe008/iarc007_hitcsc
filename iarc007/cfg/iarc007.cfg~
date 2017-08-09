@@ -1,0 +1,36 @@
+#!/usr/bin/env python
+
+PACKAGE = "iarc007"
+
+from dynamic_reconfigure.parameter_generator_catkin import *
+ 
+gen = ParameterGenerator()
+    
+#gen.add("int_param", int_t, 0, "An Integer parameter", 50, 0, 100)
+gen.add("double_kp_1", double_t, 0, "A double parameter", 1.194, 0.01, 2.0)
+gen.add("double_ki_1", double_t, 0, "A double parameter", 0.01, 0.01, 2.0)
+gen.add("double_kd_1", double_t, 0, "A double parameter", 0.01, 0.01, 2.0)
+
+gen.add("double_kp_2", double_t, 0, "A double parameter", 1.194, 0.01, 2.0)
+gen.add("double_ki_2", double_t, 0, "A double parameter", 0.01, 0.01, 2.0)
+gen.add("double_kd_2", double_t, 0, "A double parameter", 0.01, 0.01, 2.0)
+
+gen.add("double_kp_3", double_t, 0, "A double parameter", 0.4, 0.01, 3.0)
+gen.add("double_ki_3", double_t, 0, "A double parameter", 0.0, 0.01, 2.0)
+gen.add("double_kd_3", double_t, 0, "A double parameter", 0.01, 0.01, 2.0)
+
+gen.add("double_kp_4", double_t, 0, "A double parameter", 0.8, 0.01, 2.0)
+gen.add("double_ki_4", double_t, 0, "A double parameter", 0.01, 0.01, 2.0)
+gen.add("double_kd_4", double_t, 0, "A double parameter", 0.02, 0.01, 2.0)
+#gen.add("str_param", str_t, 0, "A string parameter", "Hello World")
+#gen.add("bool_param", bool_t, 0, "A Boolean parameter", True)
+
+#size_enum = gen.enum([ gen.const("Small", int_t, 0, "A small constant"),
+#                    gen.const("Medium", int_t, 1, "A medium constant"),
+#                    gen.const("Large", int_t, 2, "A large constant"),
+#                    gen.const("ExtraLarge", int_t, 3, "An extra large constant")],
+#                    "An enum to set size")
+
+#gen.add("size", int_t, 0, "A size parameter which is edited via an enum", 1, 0, 3, edit_method=size_enum)
+
+exit(gen.generate(PACKAGE, "iarc007", "iarc007"))

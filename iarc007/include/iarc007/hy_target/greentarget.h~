@@ -1,0 +1,37 @@
+#ifndef INCLUDE_IARC007_HY_TARGET_GREENTARGET_H_
+#define INCLUDE_IARC007_HY_TARGET_GREENTARGET_H_
+
+
+#include <opencv/cv.h>
+#include <opencv2/opencv.hpp>
+#include <fstream>
+
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
+struct green_description
+{
+	bool target_flag;
+	cv::Point2f start_point;
+	cv::Point2f end_point;	
+	cv::Point2f middle_point;
+	//cv::Rect roi_rect;
+};
+
+#define UINT int
+
+using namespace std;
+using namespace cv;
+
+namespace ExtendCV
+{
+	//img_src_1为8位3通道彩色图
+	//target.target_flag :true 视野中有目标，false 视野中无目标
+	//target.start_point :前向点
+	//target.end_point: 后向点
+	//target.middle_point :中心点 
+	void Green_Target(Mat img_src,green_description& target,CvMat* R,double h);
+	void dianbianhuan1(CvMat* R,CvMat* P,double h,int u,int v,int h0);
+}
+
+#endif

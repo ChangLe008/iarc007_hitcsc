@@ -1,0 +1,8 @@
+cam_model: PINHOLE
+cam_rate: 30
+cam_width: 320
+cam_height: 240
+cam_fx: 245.524822
+cam_fy: 245.931373 
+cam_cx: 155.439373
+cam_cy: 116.798660

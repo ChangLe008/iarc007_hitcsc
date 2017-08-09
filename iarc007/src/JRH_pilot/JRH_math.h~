@@ -1,0 +1,15 @@
+/*
+ * math.h
+ *
+ *  Created on: 2016年3月10日
+ *      Author: JRH
+ */
+
+#ifndef SRC_DJI_PILOT_LYB_MATH_H_
+#define SRC_DJI_PILOT_LYB_MATH_H_
+
+
+void Quaternion_To_Euler(CvMat q_att, CvMat *att);
+void Euler_To_Matrix(float roll, float pitch, float yaw, CvMat *R);
+
+#endif /* SRC_DJI_PILOT_LYB_MATH_H_ */

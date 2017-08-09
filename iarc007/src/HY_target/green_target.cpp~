@@ -1,0 +1,233 @@
+#include <ros/ros.h>
+
+#include <sys/time.h>
+#include <unistd.h>
+#include <time.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+#include <iostream>  
+#include <iomanip>
+#include <vector>   
+
+#include <cv.h>
+#include <highgui.h>
+
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/opencv.hpp>
+
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/image_encodings.h>
+#include <cv_bridge/cv_bridge.h>
+
+#include <sensor_msgs/LaserScan.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/Vector3Stamped.h>
+
+#include <iarc007/vehicle_pos.h>
+#include "/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/JRH_math.cpp"
+#include "iarc007/hy_target/greentarget.h"
+
+using namespace cv;
+using namespace std;
+
+int WIDTH = 640;
+int HEIGHT= 480;
+float deta = CV_PI/180;
+
+Mat img_src; 
+
+CvMat *R_g_b;
+
+CvMat *R_b_g;
+
+CvMat *R_b_ca;
+
+CvMat* q_att;//4*1
+CvMat* att;//3*1
+
+float height = 0;
+
+int thin_flag = 0;
+
+ros::Subscriber mono_video_sub;
+ros::Subscriber imu_sub;
+ros::Subscriber ultrasonic_sub;
+
+void mono_sub_callback(sensor_msgs::Image img_msg)
+{ 
+	cv_bridge::CvImagePtr img_bridge_ptr = cv_bridge::toCvCopy(img_msg,sensor_msgs::image_encodings::BGR8);       
+	img_bridge_ptr->image.copyTo(img_src);     
+}
+void imu_callback(const geometry_msgs::TransformStamped& g_imu)
+{
+
+	cvmSet(q_att,0,0,g_imu.transform.rotation.w);
+	cvmSet(q_att,1,0,g_imu.transform.rotation.x);
+	cvmSet(q_att,2,0,g_imu.transform.rotation.y);
+	cvmSet(q_att,3,0,g_imu.transform.rotation.z);
+	
+	Quaternion_To_Euler(q_att,att);
+	Euler_To_Matrix(cvmGet(att,0,0),cvmGet(att,1,0),cvmGet(att,2,0),R_g_b);
+	cvTranspose(R_g_b,R_b_g);
+}
+void ultrasonic_callback(const sensor_msgs::LaserScan& g_ul)
+{ 
+
+	 height = g_ul.ranges[0]-0.02;
+}
+
+int main(int argc,char** argv)
+{
+	ros::init(argc,argv,"green_target");
+	ros::NodeHandle my_node;
+	
+	FILE *jrh_q=fopen("/home/hitcsc/catkin_ws/src/iarc007/src/JRH_pilot/data/Q_INIT.txt","r");
+	
+	if(!jrh_q)
+	{
+		cout << "Error In File mjh_vision_pos: file Q_INIT open failed !" << endl;
+		return 0;
+	}
+//---------------------图像-----------------------
+
+	IplImage* img = cvCreateImage(cvSize(WIDTH,HEIGHT),8,3);
+	IplImage* img_gray=cvCreateImage(cvSize(WIDTH,HEIGHT),8,1);
+	Mat img_src_p(1000,1000,CV_8UC1);
+//---------------------矩阵----------------------
+	CvMat *R_cz_g = cvCreateMat(3,3,CV_32FC1);
+	CvMat *R_g_cz = cvCreateMat(3,3,CV_32FC1);
+	R_b_g = cvCreateMat(3,3,CV_32FC1);
+	R_g_b = cvCreateMat(3,3,CV_32FC1);
+	CvMat* R_ca_b = cvCreateMat(3,3,CV_32FC1);
+	CvMat* R_ca_cz= cvCreateMat(3,3,CV_32FC1);
+	CvMat *R_b_cz= cvCreateMat(3,3,CV_32FC1);
+	CvMat* R_chess_b = cvCreateMat(3,3,CV_32FC1);
+	CvMat* R_pixel_cz=cvCreateMat(3,3,CV_32FC1);
+	CvMat* R_cz_pixel=cvCreateMat(3,3,CV_32FC1);
+	CvMat* R_com=cvCreateMat(3,3,CV_32FC1);
+	q_att = cvCreateMat(4,1,CV_32FC1);
+	att = cvCreateMat(3,1,CV_32FC1);
+	CvMat* R_physic_p=cvCreateMat(3,1,CV_32FC1);
+	CvMat* R_pixel_p=cvCreateMat(3,1,CV_32FC1);
+//------------------------------------------------
+
+
+   	CvMat* point_physic = cvCreateMat(3,1,CV_32FC1);
+   	CvMat* point_pixel = cvCreateMat(3,1,CV_32FC1);
+
+	CvMat *q_init = cvCreateMat(4,1,CV_32FC1);
+	CvMat *att_init = cvCreateMat(3,1,CV_32FC1);
+
+	float q0,q1,q2,q3;
+	fscanf(jrh_q,"%f%f%f%f\n",&q0,&q1,&q2,&q3);
+	fclose(jrh_q);
+
+	cvmSet(q_init,0,0,q0);
+	cvmSet(q_init,1,0,q1);
+	cvmSet(q_init,2,0,q2);
+	cvmSet(q_init,3,0,q3);
+
+	Quaternion_To_Euler(q_init,att_init);
+	
+	Euler_To_Matrix(cvmGet(att_init,0,0),cvmGet(att_init,1,0),cvmGet(att_init,2,0),R_g_cz);
+
+	//cvTranspose(R_g_cz,R_cz_g);
+
+	CvMat* R_ca_chess=(CvMat*)cvLoad("/home/hitcsc/catkin_ws/src/iarc007/doc/Rotation.xml");
+
+	R_chess_b = (CvMat*)cvLoad("/home/hitcsc/catkin_ws/src/iarc007/doc/R_chess_b.xml");
+
+	cvGEMM(R_ca_chess,R_chess_b,1,NULL,0,R_ca_b);
+
+	CvMat* mono_intrinsic=(CvMat*)cvLoad("/home/hitcsc/catkin_ws/src/iarc007/doc/Intrinsics.xml");
+
+	mono_video_sub = my_node.subscribe<sensor_msgs::Image>("/iarc007/mono_video1",2,mono_sub_callback);
+	imu_sub = my_node.subscribe("/guidance/imu",10,imu_callback);
+	ultrasonic_sub = my_node.subscribe("/guidance/ultrasonic", 10, ultrasonic_callback);
+
+	//发布消息
+	ros::Rate rate(10);
+
+	green_description target;
+
+
+
+	while(ros::ok())
+	{
+		if(!img_src.data)
+		{
+			cout<<"------------error:img is null-----------------"<<endl;
+		}
+		else
+		{
+			cvGEMM(R_b_g,R_g_cz,1,NULL,0,R_b_cz);
+			cvGEMM(R_ca_b,R_b_cz,1,NULL,0,R_ca_cz);
+			cvGEMM(mono_intrinsic,R_ca_cz,1,NULL,0,R_pixel_cz);
+			Euler_To_Matrix(0,0,0,R_com);
+			cvGEMM(R_pixel_cz,R_com,1,NULL,0,R_pixel_cz);
+
+			imshow("原图",img_src);
+
+			/*Mat img_binary=Mat(img_src.rows,img_src.cols,CV_8UC1);
+			Mat img_gray=Mat(img_src.rows,img_src.cols,CV_8UC1);
+
+			imshow("原图",img_src);
+			cvWaitKey(1);
+			cvtColor(img_src,img_gray,CV_BGR2GRAY);
+
+			adaptiveThreshold(img_gray,img_binary,255,CV_ADAPTIVE_THRESH_GAUSSIAN_C ,CV_THRESH_BINARY_INV,101,3);
+			
+			imshow("二值图",img_binary);
+			cvWaitKey(1);*/
+
+		 	/*Mat img_binary=Mat(img_src.rows,img_src.cols,CV_8UC1);
+    		Mat result=Mat(img_src.rows,img_src.cols,CV_8UC1);	
+
+		    cvtColor(img_src,img_binary,CV_BGR2GRAY);
+
+   			equalizeHist(img_binary,result);
+			imshow("均衡化",result);
+			cvWaitKey(1);*/
+
+			/*vector<Mat> channels;
+			split(img_src,channels);
+
+			equalizeHist(channels[0],channels[0]);
+			imshow("B",channels[0]);
+			equalizeHist(channels[1],channels[1]);
+			imshow("G",channels[1]);
+			equalizeHist(channels[2],channels[2]);
+			imshow("R",channels[2]);
+			cvWaitKey(1);
+			merge(channels,img_src);
+			imshow("均衡化",img_src);*/
+			target.target_flag = false;			
+			if(height>0.4)
+			{
+
+				ExtendCV::Green_Target(img_src,target,R_pixel_cz,height*100);
+				if(target.target_flag)
+				{
+					printf("start:(%f,%f)\tend:(%f,%f)\tmiddle:(%f,%f)\n",target.start_point.x,target.start_point.y, target.end_point.x, target.end_point.y, target.middle_point.x,target.middle_point.y);
+					//printf("roi:%d\t%d\t%d\t%d\n",target.roi_rect.x,target.roi_rect.y,target.roi_rect.width, target.roi_rect.height);
+				}
+				else
+				{
+					printf("no target\n");
+				}
+			}
+			else
+			{
+				printf("Height<40\n");
+			}	
+
+		}
+		ros::spinOnce();
+		rate.sleep();
+	}
+}
+ 

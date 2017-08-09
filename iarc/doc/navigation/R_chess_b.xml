@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<R_chess_b type_id="opencv-matrix">
+  <rows>3</rows>
+  <cols>3</cols>
+  <dt>f</dt>
+  <data>
+    1. 0. 0. 0. 1. 0. 0. 0. 1.</data></R_chess_b>
+</opencv_storage>

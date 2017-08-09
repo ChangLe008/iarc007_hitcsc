@@ -1,0 +1,23 @@
+<launch>
+	
+   <include file="$(find dji_sdk)/launch/sdk_manifold.launch"/>
+   	
+   <node pkg="iarc007" type="hy_opencv_pub" name="mono_video_pub" output="screen">
+   </node>
+
+   <node pkg="guidance" type="guidance_pub" name="GuidanceNode" output="screen">
+   </node>
+
+   <node pkg="iarc007" type="mjh_vision_pos" name="mjh_vision_pos" output="screen">
+   </node>
+
+   <node pkg="guidance" type="guidanceNodeTest" name="guidanceNode" output="screen">
+   </node>
+   <include file="$(find realsense_camera)/launch/realsense_r200_nodelet_standalone_manual.launch"/>
+   
+   <node pkg="iarc007" type="hy_opencv_sub" name="mono_video_sub" output="screen">
+   </node>
+      
+   
+</launch> 
+ 

@@ -1,0 +1,16 @@
+<launch>
+
+   <node pkg="iarc007" type="hy_opencv_pub" name="mono_video_pub" output="screen">
+   </node>
+
+   <node pkg="iarc007" type="hy_opencv_sub" name="mono_video_sub" output="screen">
+   </node>
+
+   <node pkg="guidance" type="guidance_pub" name="GuidanceNode" output="screen">
+   </node>
+
+   <node pkg="rosbag" type="record" name="record" args="-O /home/hitcsc/catkin_ws/src/iarc007/log/iarc007.bag 
+              /iarc007/mono_video /iarc007/mono_video1 /guidance/ultrasonic /guidance/imu /guidance/position /guidance/velocity /dji_sdk/acceleration 
+             /dji_sdk/attitude_quaternion /dji_sdk/compass /dji_sdk/global_position">
+   </node>
+</launch>

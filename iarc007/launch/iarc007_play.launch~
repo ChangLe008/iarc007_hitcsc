@@ -1,0 +1,9 @@
+<launch>
+
+   <node pkg="iarc007" type="hy_opencv_sub" name="mono_video_sub" output="screen">
+   </node>
+
+   <node pkg="rosbag" type="play" name="play" args="/home/hitcsc/catkin_ws/src/iarc007/log/iarc007.bag>
+   </node>
+
+</launch>

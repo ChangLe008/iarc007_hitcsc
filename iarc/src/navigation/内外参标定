@@ -1,0 +1,9 @@
+内参
+rosrun iarc cam_get
+rosrun camera_calibration cameracalibrator.py --size 11x7 --square 0.03 image:=/my_mono/image_raw camera:=/my_mono
+将temp中txt下的内参及畸变参数分别copy到Intrinsic.xml和Distortion.xml中
+rosrun iarc new_intrinsic
+
+外参
+rosrun iarc wide_angle_pub
+rosrun iarc external_parameter

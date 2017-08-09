@@ -1,0 +1,29 @@
+
+应用： 2016届国际空中机器人大赛
+
+文件组织形式：
+Package: iarc007
+Manifest: package.xml
+CMake List: CMakeLists.list
+Source Folder: src
+
+	src/hy_target: 目标跟踪检测程序----侯谊
+	src/jrh_pilot: 飞行器控制操作程序---季锐航
+	src/mjh_pos: 飞行器自定位程序-----马静浩
+	src/zy_yqt_obstacle: 双目视觉检测程序----张雨/于庆涛
+配置参数以及测试视频文件夹： doc
+消息定义文件夹： msg
+服务定义文件夹： srv
+action定义文件夹： action
+头文件文件夹： include/iarc007:公用头文件夹
+              hy_target: hy专用头文件夹
+              jrh_pilot: jrh专用头文件夹
+              mjh_pos: mjh专用头文件夹
+              zy_obstacle: zy专用头文件夹 
+库文件夹：lib
+日志文件夹：log
+多进程运行控制文件文件夹：launch
+
+编译命令： catkin_make
+编译命令（运行后可使用eclipse加载工程）: . ide.sh 或者 source ide.sh
+运行命令： rosrun [pkg] [cpp]

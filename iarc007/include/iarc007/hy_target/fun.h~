@@ -1,0 +1,257 @@
+/*
+ * fun.h
+ *
+ *  Created on: 2016年3月13日
+ *      Author: exbot
+ */
+#ifndef FUN_H_
+#define FUN_H_
+
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <linux/fb.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+//#include <io.h>
+
+#include <opencv/cv.h>
+#include <opencv/highgui.h>
+#include <opencv/cxcore.h>
+#include <opencv/cvaux.h>
+
+#define CAMERAX 0//机体系相机原点坐标X
+#define CAMERAY 0//机体系相机原点坐标Y
+#define CAMERAZ 0//机体系相机原点坐标Z
+
+#define Queue 310000
+
+
+#define CamShift			//choose whether to track or not
+#define CamShift_Debug		//choose whether to show some parameters
+
+#define MAX_NUM 10			//the number of the robot(not target) in this game
+#define HIST_HDIMS 32		//定义直方图分组数
+#define VMIN 10
+#define VMAX 256
+#define SMIN 30
+#define IPL_WIDTH 640
+#define IPL_HEIGHT 480
+#define COM_Bhattacharyya	0.63		//巴氏系数匹配上限
+
+#define FILENAME	"data.txt"		//定义模板1文件名宏
+#define FILENAME1	"data1.txt"		//定义模板2文件名宏
+#define FILENAME2	"test.txt"		//定义测试文件名宏
+
+typedef enum
+{
+	ROBOT_NO,			//target-no
+	ROBOT_RED,			//target-red
+	ROBOT_GREEN,		//target-green
+	ROBOT_BARRIER		//target-barrrier
+}Robot_Find;
+
+typedef struct
+{
+	CvHistogram *hist;			//模型1
+	float max_val;
+	CvRect Rec;
+	double bhattacharyya;		//巴氏系数，相对测试
+}Hist_Store;
+
+typedef struct
+{
+	Robot_Find robot_sta_now;		//the status of the target in this frame
+	Robot_Find robot_sta_pre;		//the status of the target in last frame
+	CvBox2D Track_Target_Box_Now;	//the struct box of the target in this frame
+	CvBox2D Track_Target_Box_Pre;	//the struct box of the target in last frame
+	CvHistogram *hist_now;			//the histogram of a target in this frame
+	CvHistogram *hist_pre;			//the histogram of a target in last frame
+	Hist_Store hist;				//save the message of the hist
+	int Once_Start;					//start a new trace-1
+	int logo_num;					//the number of the robot
+	int track_count;				//the nunber of the frames that we have been tracking now
+}Robot_Sta_Single;					//all messages of a single target
+
+typedef struct
+{
+	int track[MAX_NUM];				//???
+	int tracknumber;				//the number that should be tracked
+	int target_count_now;				//the number of the target is this frame
+	int target_count_pre;				//the number of  teh targets in last frame
+	Robot_Sta_Single robot_sta_single[MAX_NUM];	//all messages of every target
+}Robot_Sta_All;
+
+typedef struct
+{
+	bool R_Sta[MAX_NUM];			//机器人状态
+	bool R_Ch2Disap[MAX_NUM];		//某一帧机器人消失
+	bool R_Ch2Ap[MAX_NUM];			//某一帧机器人出现
+	bool RC_Red;				//机器人总数减少
+	bool RC_Inc;				//机器人总数增加
+}R_Watch;
+/*
+	对R_Watch结构体的说明：
+	1.R_Sta表示所在周期所有机器人状态，FALSE表示没有，TRUE表示有
+	2.R_Ch2Disap表示某一（几）个机器人消失的标志，仅仅在消失的那一帧起作用！该值为1说明这件事发生，与长时间状态相比，它更强调变化的瞬间
+	3.R_Ch2Ap表示某一（几）个机器人出的标志，仅仅在出现的那一帧起作用！该值为1说明这件事发生，与长时间状态相比，它更强调变化的瞬间
+	4.总体上讲，第一个成员强调长时间的状态，后两个成员强调“变化”的那一帧
+*/
+
+extern Robot_Sta_All robot_sta_all;
+
+extern R_Watch r_watch;
+
+extern long Frame_Count;			//frames of the camera
+
+#ifdef CamShift
+
+extern int Start_Flag, backproject_mode, select_object, track_object, show_hist, hdims, vmin, vmax, smin;
+
+extern IplImage *Src_HSV, *Src_Hue, *mask, *backproject, *histimg, *temp_src, *Backproject_mode, *showimage, *Hist_image, *Hist_image_temp;
+
+extern CvRect selection, track_window;
+
+extern int flag_robot[MAX_NUM];
+
+//说明：第一次赋值时，只需要给出中心点的坐标和矩形的长和宽，角度设为0
+//如果加入长宽限定之后的矩形框超出边界，那么只需要将长度或者宽度设为2*center.x或者2*center.y即可
+
+extern CvConnectedComp track_comp[MAX_NUM];			//连接部件
+extern float hranges_arr[], *hranges;				//像素值的范围
+
+#ifdef CamShift_Debug
+extern IplImage* showimage;
+#endif
+
+#endif
+float Low_Pass2(float hy_h);
+ void Ref_Rem(IplImage *src, IplImage *dst, double re);
+//红色点赋值100,绿色点赋值200
+int panduan(IplImage* img,IplImage* dst,CvPoint* p);
+
+//连通域分析
+int liantongyu(IplImage* src,float cx[],float cy[],double h);
+
+void creat(int x,int y);
+void pushback(int x,int y);
+//如果队列为空，返回0
+int empty();
+void clear(); 
+int RegionGrow(const IplImage* src,IplImage* dst, int u,int v,int threshold,CvPoint* p,double h);
+//角点检测
+int featuredetector(IplImage* img,CvPoint2D32f* corners,double h,int u,int v);
+
+void dianbianhuan(CvMat* R,CvMat* P,double h,int u,int v);
+//yaw 偏航角， roll  滚转角， pitch 俯仰角,h单位为cm，x,y是在图像中的坐标
+
+void biaoding(IplImage* image,CvCapture* capture);
+
+CvPoint2D32f mubanjisuan(CvPoint2D32f a,CvPoint2D32f b,double l,int flag);
+
+int MySobel(CvPoint2D32f* jiaodian,CvPoint2D32f* corners,int corner_count,IplImage* gray);
+
+int cornermatching(int corner_count,CvPoint2D32f* jiaodian,CvMat* Ra,int h,int f_ID[][10],CvPoint2D32f muban_point[][10]);
+int regiongrow(const IplImage* src,IplImage* dst, int u,int v,int threshold,CvPoint2D32f* p,double h);
+int lunkuodian(IplImage* image,CvPoint2D32f* point,double h,CvMat* R,CvPoint2D32f* contour_point);
+
+int S_Replace(int s[],int s_length);
+int sort(int s_Backup[],int s_length );
+CvPoint  DistortionPoint(int x,int y,CvMat* distortion,CvMat* intrinsic);
+
+/*以下为CamShift部分*/
+extern void R_Watch_Init(void);
+/*tiem: 2016.7.19*/
+/*func：R_Watch结构体的初始化*/
+//para: none
+//tips: 由于bool变量，初始化时不可单纯置0，要有实际意义
+extern void CamShift_Init(void);
+/*tiem: 2016.5.9*/
+/*func：initialize some parameters*/
+//para: none
+//tips: if the initialization is failed, we will return a "ROBOT_NO"
+extern void HY_CamShift(IplImage* src, int radius);
+/*time: 2016.5.9*/
+/*func: use "CamShift" to track the target*/
+/*para: image(8*3), track radius*/
+/*tips: none*/
+extern void CamShift_Release(void);
+/*time: 2016.5.9*/
+/*func: release image*/
+/*para: none*/
+/*tips: none*/
+extern void R_Sta_Reset(Robot_Sta_Single *robot);
+/*time: 2016.7.19*/
+/*func: 机器人状态重置*/
+/*para: 单个机器人信息结构体*/
+/*tips: 此函数仅仅用于清理最后一位数组成员，不作为机器人丢失时的重置*/
+extern void Robot_Message_Show(void);
+/*time: 2016.5.9*/
+/*func: show the messages of the targets*/
+/*para: none*/
+void Hist_Store_Init(void);
+/*time: 2016.6.3*/
+/*func: initialization the histogram*/
+/*para: none*/
+/*tips: none*/
+void Letter_Show(char *buf, CvPoint point, IplImage *img);
+/*time: 2016.6.3*/
+/*func: show some words on the image*/
+/*para: words, image*/
+/*tips: none*/
+void Hist_Draw(CvHistogram *hist, float maxval, int yoffset);
+/*time: 2016.6.3*/
+/*func: draw the histogram of the ROI*/
+/*para: histogram*/
+/*tips: none*/
+void Get_HistFromFile(Hist_Store *hist, char *filename);
+/*time: 2016.6.3*/
+/*func: get the normal module from the file*/
+/*para: histogram(Double pointer), the name of the file*/
+/*tips: none*/
+void Save_Hist2File(Hist_Store *hist, char *filename);
+/*time: 2016.6.3*/
+/*func: save data to the file*/
+/*para: histogram(Double pointer), the name of the file*/
+/*tips: none*/
+void Hist_Get(Hist_Store *hist, char *filename, IplImage* img);			//获取目标的直方图，并更新文件
+/*time: 2016.6.3*/
+/*func: Get a standard model to the file*/
+/*para: histogram(Double pointer), the name of the file, the iamge(not ROI), rectangle*/
+/*tips: the first input parametaer must be "&(hist_store.hist_mould)"*/
+void Hist_Up(CvHistogram *hist1, CvHistogram *hist2, float weight);
+/*time: 2016.6.3*/
+/*func: Update the histogram of the target*/
+/*para: first histogram, second histogram, weight*/
+/*tips: the result will be stored in the first paramater*/
+float BHA_Cal(CvHistogram *hist1, CvHistogram *hist2);
+//计算两个直方图之间的巴氏系数
+extern void Num_Update(void);
+/*time: 2016.7.9*/
+/*func: Update the number of the target*/
+/*para: none*/
+/*tips: none*/
+extern void Robot_Sta_Copy(Robot_Sta_Single *robot1, Robot_Sta_Single *robot2);
+/*time: 2016.7.9*/
+/*func: Copy the message of the target*/
+/*para: all the message of one target*/
+/*tips: copy 1 to 2*/
+extern void R_Mes_Up(Robot_Sta_Single *robot);
+/*time: 2016.7.18*/
+/*func: 机器人信息的更新*/
+/*para: 单个机器人的结构体*/
+/*tips: 无*/
+extern void R_Watch_Refresh(void);
+/*time: 2016.7.19*/
+/*func: R_Watch结构体的更新*/
+/*para: 无*/
+/*tips: 无*/
+extern float Re_Coin_Degree(CvRect r1, CvRect r2, int *num);
+/*time: 2016.7.26*/
+/*func: 计算两个矩形的重合部分占面积小的矩形的比例*/
+/*para: 两个矩形*/
+/*tips: 返回值是重合度和面积小的矩形标号（前者返回1，后者返回2）*/
+#endif /* FUN_H_ */
+

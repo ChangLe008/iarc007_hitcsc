@@ -1,0 +1,149 @@
+cmake_minimum_required(VERSION 2.8.3)
+project(iarc007)
+
+
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  rospy
+  message_generation
+  cv_bridge
+  image_transport
+  sensor_msgs
+  std_msgs
+  geometry_msgs
+  nav_msgs
+  dji_sdk
+  dynamic_reconfigure
+  actionlib
+  actionlib_msgs
+  guidance
+)
+
+find_package(OpenCV REQUIRED)
+
+set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
+
+add_message_files(
+   FILES
+   object.msg
+   obstacle.msg
+   vehicle_pos.msg
+)
+
+
+generate_messages(
+   DEPENDENCIES
+   geometry_msgs
+   nav_msgs
+   std_msgs
+   actionlib_msgs
+)
+
+generate_dynamic_reconfigure_options(
+  cfg/iarc007.cfg
+)
+
+catkin_package(
+   INCLUDE_DIRS include
+   #LIBRARIES lib
+   CATKIN_DEPENDS message_runtime std_msgs geometry_msgs nav_msgs dji_sdk
+   #DEPENDS 
+)
+
+include_directories(
+  include
+  ${catkin_INCLUDE_DIRS}
+)
+
+# --- Add executable  ----#
+add_executable(jrh 
+	src/JRH_pilot/pilotmain.cpp
+	src/JRH_pilot/control.cpp
+	src/JRH_pilot/JRH_math.cpp
+	)
+
+add_executable(hy_opencv_pub src/HY_target/hy_opencv_pub.cpp)
+add_executable(hy_opencv_sub src/HY_target/hy_opencv_sub.cpp 
+			     src/HY_target/target.cpp 
+			     src/HY_target/Track.cpp 
+			     src/HY_target/common.cpp 
+			     src/HY_target/aprilTags.cpp
+			     src/HY_target/DecHOG.cpp
+			     src/HY_target/findcircle.cpp
+			     src/HY_target/fun.cpp
+			     src/HY_target/Filter_Statistic.cpp
+			     src/HY_target/lowtarget.cpp
+			     src/HY_target/angleID.cpp
+			     src/JRH_pilot/JRH_math.cpp)
+add_executable(exter_param src/HY_target/exter_param.cpp)
+add_executable(calibration src/HY_target/calibration.cpp)
+add_executable(green_target src/HY_target/green_target.cpp
+                            src/HY_target/greentarget.cpp
+			    src/HY_target/dianbianhuan1.cpp)
+
+add_executable(mjh_pos src/MJH_pos/mjh_pos.cpp)
+add_executable(mjh_vision_pos src/MJH_pos/mjh_vision_pos.cpp
+			      src/JRH_pilot/JRH_math.cpp)
+#add_executable(mjh_vision_yaw src/MJH_pos/mjh_vision_yaw.cpp
+#			      src/JRH_pilot/JRH_math.cpp)
+
+add_executable(zy_obstacle src/ZY_obstacle/zy_obstacle.cpp)
+
+# ----  dependencies   ----- #
+add_dependencies(jrh iarc007_generate_messages_cpp dji_sdk_generate_messages_cpp)
+add_dependencies(jrh ${PROJECT_NAME}_gencfg)
+
+add_dependencies(hy_opencv_pub iarc007_generate_messages_cpp)
+add_dependencies(hy_opencv_sub iarc007_generate_messages_cpp dji_sdk_generate_messages)
+add_dependencies(exter_param iarc007_generate_messages_cpp)
+add_dependencies(calibration iarc007_generate_messages_cpp)
+
+add_dependencies(mjh_pos iarc007_generate_messages_cpp)
+add_dependencies(mjh_vision_pos iarc007_generate_messages_cpp)
+
+#add_dependencies(mjh_vision_yaw iarc007_generate_messages_cpp)
+add_dependencies(zy_obstacle iarc007_generate_messages_cpp)
+
+# ----  target_link  ----#
+target_link_libraries(jrh
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+
+target_link_libraries(hy_opencv_pub
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+target_link_libraries(hy_opencv_sub
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+target_link_libraries(exter_param
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+target_link_libraries(calibration
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+target_link_libraries(green_target
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+
+target_link_libraries(mjh_pos
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+target_link_libraries(mjh_vision_pos
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+#target_link_libraries(mjh_vision_yaw
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBS}
+#)
+target_link_libraries(zy_obstacle
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)

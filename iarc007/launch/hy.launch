@@ -1,0 +1,8 @@
+<launch>
+   
+   <node pkg="rosbag" type="record" name="record" args="-O /home/hitcsc/catkin_ws/src/iarc007/log/houge.bag 
+              /dji_sdk/imu /guidance/ultrasonic /guidance/position 
+	      /dji_sdk/attitude_quaternion /guidance/velocity /dji_sdk/acceleration /dji_sdk/velocity
+ /iarc007/mono_video /dji_sdk/compass	">
+   </node>
+</launch>

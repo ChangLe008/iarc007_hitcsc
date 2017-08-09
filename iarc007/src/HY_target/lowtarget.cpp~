@@ -1,0 +1,350 @@
+#include "iarc007/hy_target/lowtarget.h"
+
+using namespace std;
+using namespace cv;
+
+void ExtendCV::Low_Target(Mat img_src_1,target_description& target)
+{
+	IplImage* img_src = NULL;
+	IplImage img_temp;
+	IplImage* img_src_temp = NULL;
+
+	Mat img_binary;
+	Mat img_binary_forever;
+	Mat img_src_forever;
+
+	int panel_centre_x;
+	int panel_centre_y;
+
+	int roi_min_x;
+	int roi_max_x;
+	int roi_max_y;
+	int roi_min_y;
+
+	int roi_width;
+	int roi_hight;
+
+	img_temp = (IplImage)img_src_1;
+	img_src = &img_temp;
+
+	//cvShowImage("原图",img_src);	
+
+	img_src_temp = img_src;
+	img_src_forever = Mat(img_src,true);
+
+	img_binary=Mat(cvGetSize(img_src),CV_8UC1);
+	img_binary_forever=Mat(cvGetSize(img_src),CV_8UC1);
+	Mat img_roi(img_binary.rows,img_binary.cols,CV_8UC1);
+
+	uchar* data;
+
+	int data_R,data_G,data_B;
+
+	float data_H,data_S,data_I;
+
+	img_binary.setTo(cv::Scalar::all(0));
+
+	img_binary_forever.setTo(cv::Scalar::all(0));
+
+
+	for(int i = 0;i<img_src->height;i++)
+	{
+		for(int j= 0;j<img_src->width;j++)
+		{
+			data = cvPtr2D(img_src,i,j,0);//BGR
+			data_B = *data;
+			data++;
+			data_G = *data;
+			data++;
+			data_R = *data;
+				
+			data_I = (data_R+data_G+data_B)/3.0;
+			//data_I = 0;
+			int temp = (data_R>data_G)?data_G:data_R;
+			temp = (temp>data_B)?data_B:temp;
+
+			data_S = 1-3.0*temp/(data_R+data_G+data_B);
+
+			float deno,nume;
+			nume =(data_R-data_G+data_R-data_B)/2.0;
+			deno = sqrtf((data_R-data_G)*(data_R-data_G)+(data_R-data_B)*(data_G-data_B));
+				
+			if(deno == 0)
+			{
+				data_H = 0;
+			}
+			else
+			{
+				float theta = acosf(nume/deno)*180/CV_PI;
+
+				if(data_B <= data_G)
+				{
+					data_H = theta;
+				}
+				else
+				{
+					data_H = 360 - theta;
+				}	
+			}
+
+			if(fabs(data_H)<40|fabs(data_H-360)<40)
+			{
+				if(data_S>0.1)
+				{
+					img_binary.at<uchar>(i,j)=255;
+					img_binary_forever.at<uchar>(i,j) = 255;
+				}
+			}
+		}
+	}
+
+	//imshow("框二值图",img_binary);
+
+	vector<vector<Point>> contours;
+	vector<Vec4i> hierarchy;
+	findContours(img_binary, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE,Point(0, 0));
+
+	double maxArea = 0;  
+	double area = 0;  
+	int maxAreaIdex = 0;
+	for (int i = 0; i<contours.size(); i++)  
+	{  
+		area = fabs(contourArea(contours[i]));
+		if(area>maxArea)
+		{
+			maxArea = area;
+			maxAreaIdex = i;
+		}
+	}  
+	float check_area = 1000;
+
+	if(maxArea>check_area)
+	{
+		vector<RotatedRect> minRect(1);  
+		Scalar color = Scalar(255,255,255);  
+
+		minRect[0] = minAreaRect(Mat(contours[maxAreaIdex]));
+		Point2f rect_points[4]; minRect[0].points(rect_points); 
+
+		panel_centre_x = int((rect_points[0].x+rect_points[2].x)/2);
+		panel_centre_y = int((rect_points[0].y+rect_points[2].y)/2);
+
+		int threshold_num = 3;
+		Point2f angle_point[4];
+					
+		angle_point[0].x = threshold_num;
+		angle_point[0].y = threshold_num;
+		angle_point[1].x = img_binary.cols-threshold_num;
+		angle_point[1].y = threshold_num;
+		angle_point[2].x = img_binary.cols-threshold_num;
+		angle_point[2].y = img_binary.rows-threshold_num;
+		angle_point[3].x = threshold_num;
+		angle_point[3].y = img_binary.rows-threshold_num;
+
+		for(int i=0;i<4;i++)
+		{
+			line(img_src_forever, angle_point[i],angle_point[(i+1)%4],color,1,8);
+		}
+
+		float result[4];
+		bool result_check = true;
+		for(int j = 0;j<4;j++)
+		{
+			result_check=result_check&(rect_points[j].x>angle_point[0].x);
+			result_check=result_check&(rect_points[j].x<angle_point[1].x);
+			result_check=result_check&(rect_points[j].y>angle_point[0].y);
+			result_check=result_check&(rect_points[j].y<angle_point[2].y);
+		}
+		if(result_check)
+		{
+			target.target_flag = true;
+				
+			Point2f middle_point[4];
+			for( int j = 0; j < 4; j++ )  
+			{
+				middle_point[j].x = ((rect_points[j].x+rect_points[(j+1)%4].x)/2);
+				middle_point[j].y = ((rect_points[j].y+rect_points[(j+1)%4].y)/2);
+			}
+
+			circle(img_src_forever,Point(panel_centre_x,panel_centre_y),2,Scalar(0,0,255),2); 
+
+			float distance_1 = (middle_point[0].x-middle_point[2].x)*(middle_point[0].x-middle_point[2].x)+(middle_point[0].y-middle_point[2].y)*(middle_point[0].y-middle_point[2].y);
+
+			distance_1 = sqrt(distance_1);
+					
+			float distance_2 = (middle_point[1].x-middle_point[3].x)*(middle_point[1].x-middle_point[3].x)+(middle_point[1].y-middle_point[3].y)*(middle_point[1].y-middle_point[3].y);
+
+			distance_2 = sqrt(distance_2);
+	
+			if(distance_1>distance_2)
+			{
+				float temp_x = rect_points[0].x;
+				float temp_y = rect_points[0].y;
+				float middle_temp_x = middle_point[0].x;
+				float middle_temp_y = middle_point[0].y;				
+				for(int m=0;m<3;m++)
+				{
+					rect_points[m].x = rect_points[m+1].x;
+					rect_points[m].y = rect_points[m+1].y;
+					middle_point[m].x = middle_point[m+1].x;
+					middle_point[m].y = middle_point[m+1].y;
+				}
+				rect_points[3].x = temp_x;
+				rect_points[3].y = temp_y;
+				middle_point[3].x =middle_temp_x;
+				middle_point[3].y =middle_temp_y;
+						
+				float distance_temp = distance_1;
+				distance_1 = distance_2;
+				distance_2 = distance_temp;
+			}	
+					
+			line(img_src_forever, middle_point[0], middle_point[2],color,1,8);
+
+			/*direction_point_x1 = middle_point[0].x;
+			direction_point_y1 = middle_point[0].y;
+			direction_point_x2 = middle_point[2].x;
+			direction_point_y2 = middle_point[2].y;*/
+					
+			roi_min_x = 800;
+			roi_max_x = -1;
+			roi_max_y = -1;
+			roi_min_y = 500;
+			for(int i=0;i<4;i++)
+			{
+				roi_min_x = (rect_points[i].x<roi_min_x)?rect_points[i].x:roi_min_x;
+				roi_max_x = (rect_points[i].x>roi_max_x)?rect_points[i].x:roi_max_x;
+				roi_min_y = (rect_points[i].y<roi_min_y)?rect_points[i].y:roi_min_y;
+				roi_max_y = (rect_points[i].y>roi_max_y)?rect_points[i].y:roi_max_y;
+			}	
+
+			roi_width = roi_max_x-roi_min_x;
+			roi_hight = roi_max_y-roi_min_y;
+
+			target.roi_rect = Rect(roi_min_x,roi_min_y,roi_width,roi_hight);
+
+			img_binary_forever(Rect(roi_min_x, roi_min_y,roi_width,roi_hight)).copyTo(img_roi);
+
+			//imshow("roi",img_roi);
+
+			Point2f vector01;
+			Point2f vector02;
+
+			vector01.x = rect_points[1].x-rect_points[0].x;
+			vector01.y = rect_points[1].y-rect_points[0].y;
+					
+			vector02.x = rect_points[2].x-rect_points[0].x;
+			vector02.y = rect_points[2].y-rect_points[0].y;
+
+			float vector01_x_vector02 = vector01.x*vector02.y-vector02.x*vector01.y;
+
+			int rotation_direction;//顺时针+1，逆时针-1
+
+			if(vector01_x_vector02>0)
+			{
+				rotation_direction = -1;
+			}
+			else
+			{
+				rotation_direction = +1;
+			}
+					
+						
+			//printf("rotation_direction:%d\n",rotation_direction);
+
+			float roi_radius;					
+			roi_radius = distance_1/8;
+			Point2f roi_centre[4];
+			float angle_i_next[4];
+
+			float sqrt_2 = 1.414213562;
+
+			for(int n = 0;n<4;n++)
+			{
+				angle_i_next[n] = atan2f(rect_points[(n+1)%4].y-rect_points[n].y,rect_points[(n+1)%4].x-rect_points[n].x);
+				angle_i_next[n] = angle_i_next[n]-rotation_direction*CV_PI/4;
+						
+				roi_centre[n].x = rect_points[n].x+sqrt_2*roi_radius*cos(angle_i_next[n]);
+				roi_centre[n].y = rect_points[n].y+sqrt_2*roi_radius*sin(angle_i_next[n]);
+
+				circle(img_src_forever,roi_centre[n],roi_radius,Scalar(0,0,255),1);
+						
+				circle(img_binary_forever,roi_centre[n],roi_radius,Scalar(255,255,255),1);
+
+				line(img_src_forever, rect_points[n], rect_points[(n+1)%4],Scalar(255,255,255), 1,8); 
+
+				/*char str_i[11];
+				sprintf(str_i,"%d",n);
+				putText(img_src_forever,str_i, roi_centre[n],CV_FONT_HERSHEY_COMPLEX,0.7,Scalar(0,0,255));*/
+			}
+
+			int circle_black[4] = {0,0,0,0};
+						
+			for(int roi_x = roi_min_x;roi_x<roi_max_x;roi_x++)
+			{
+				for(int roi_y = roi_min_y;roi_y<roi_max_y;roi_y++)
+				{
+					if(img_binary_forever.at<uchar>(roi_y,roi_x) == 255)
+					{
+						continue;
+					}
+					else
+					{
+						for(int circle_num=0;circle_num<4;circle_num++)
+						{
+							float roi_result;
+							roi_result = (roi_x-roi_centre[circle_num].x)*(roi_x-roi_centre[circle_num].x)+(roi_y-roi_centre[circle_num].y)*(roi_y-roi_centre[circle_num].y);
+							if(roi_result<=roi_radius*roi_radius)
+							{
+								circle_black[circle_num]++;
+							}
+						}
+					}
+				}
+			}
+						
+			float black_num01 = circle_black[0]+circle_black[1];
+			float black_num23 = circle_black[2]+circle_black[3];
+						
+			if(black_num01>black_num23)
+			{
+				circle(img_src_forever,middle_point[0],5,Scalar(0,255,255),-1);
+				target.start_point.x = middle_point[0].x;
+				target.start_point.y = middle_point[0].y;
+					
+				target.end_point.x = middle_point[2].x;
+				target.end_point.y = middle_point[2].y;
+			}
+			else
+			{
+				circle(img_src_forever,middle_point[2],5,Scalar(0,255,255),-1);
+				target.start_point.x = middle_point[2].x;
+				target.start_point.y = middle_point[2].y;
+					
+				target.end_point.x = middle_point[0].x;
+				target.end_point.y = middle_point[0].y;
+			}
+					
+
+			target.middle_point.x = panel_centre_x;
+			target.middle_point.y = panel_centre_y;
+
+			/*char str_01[11];
+			sprintf(str_01,"%f",black_num01);
+			putText(img_src_forever,str_01,Point(300,200),CV_FONT_HERSHEY_COMPLEX,0.7,Scalar(0,255,255));
+
+			char str_23[11];
+			sprintf(str_23,"%f",black_num23);
+			putText(img_src_forever,str_23,Point(300,300),CV_FONT_HERSHEY_COMPLEX,0.7,Scalar(0,255,255));*/
+		}
+	}
+	else
+	{
+		target.target_flag = false;
+		//printf("No target!\n");
+	}
+	imshow("轮廓",img_src_forever);	
+	//imshow("轮廓1",img_binary_forever);	
+	char key_end = cvWaitKey(1);
+
+}

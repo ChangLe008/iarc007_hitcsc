@@ -1,0 +1,308 @@
+/*v1.0: 2017.07.08, 王宁远, 交互避障框架搭建*/
+/*程序功能：存在移动障碍物，及包含边界约束环境中的目标选择及交互动作指令选取*/
+/*所有变量均定义在赛场动坐标系下*/
+/*位置变量单位为m，速度变量单位为m/s，加速度变量单位为m/s2，时间变量单位为s,角度变量单位为rad*/
+/*已有信息：目标位置，目标速度方向，全向障碍物位置，边界检测，飞行器航向*/
+/*细节说明：1.接收顶层决策的指令，选取单次交互或者多次以某种模式组合交互；2.底层交互动作的完成看作已封装完毕的程序块*/
+
+
+
+
+/*第1部分：变量定义及初始化*/
+//障碍物部分
+int wny_obs_number=0;
+float wny_obs_rela_posx[3]={10.0,10.0,10.0,10.0};
+float wny_obs_rela_posy[3]={10.0,10.0,10.0,10.0};
+float wny_obs_rela_pos[3]={14.1,14.1,14.1,14.1};
+float wny_obs_theta[3]={0.0,0.0,0.0,0.0};
+float wny_obs_tempx=0.0;
+float wny_obs_tempy=0.0;
+
+//目标部分（目前默认目标选取的程序不在这部分写，即只考虑读取唯一的目标）
+float wny_tar_rela_posx=0.0;	
+float wny_tar_rela_posy=0.0;
+float wny_tar_rela_pos=0.0;
+float wny_tar_theta=0.0;		//目标速度方向角区间为[-π,π)
+float wny_tar_theta_before=0.0;		//用以判断交互是否有效
+
+//边界部分
+int wny_side_check=4;		//0表示绿边，1表示右白边，2表示红边，3表示左白边（顺时针），4表示无效标志位
+int wny_side_corner=2;		//0表示在边附近，1表示在角附近，2表示既不在边附近又不在角附近
+
+int wny_side_flag=0;		//0表示不在边界附近，1表示在边界附近(1条边界)，2表示在边界附近(2条边界)，假设在边界附近已经有距离阈值，也就是距离缩短到某一范围以内，从0变为1或2
+int wny_side_flag_last=0;
+int wny_side_filter=0;
+int wny_side_count=0;
+int wny_side_judge=0;
+float wny_side_flag_sum=0.0;
+float wny_side_flag_mean=0.0;
+float wny_side_first=0.0;
+float wny_side_second=0.0;
+
+//高度部分
+float wny_quad_hfilter[5]={0.08,0.08,0.08,0.08,0.08,0.08};	//高度中值滤波的数据存储值（存6次数据，初始值考虑飞行器停在地面上，取0.08，为8cm）
+float wny_quad_height=0.0;					//高度数据的原始读取值
+float wny_quad_htemp=0.0;
+float wny_quad_posz=0.0;
+float wny_quad_poszmax=1.25;
+float wny_quad_poszmin=1.20;
+
+//顶层部分
+int wny_interaction_number=0;				//连续交互动作不超过6次
+int wny_interaction_choice[5]={0,0,0,0,0,0};		//0表示巡航（不交互），1表示45度交互，2表示180度交互
+int wny_interaction_choice_last[5]={0,0,0,0,0,0};
+int wny_interaction_flag=0;				//0表示顶层读回的数据没有变化；1表示顶层读回的数据有变化
+
+//底层部分
+int wny_interaction_motion=0;	//底层交互动作标志位，0表示无效置位，1表示交互进行中（包括下降与上升），2表示交互未进行（包括未开始或已结束）
+
+//时间部分
+int wny_time=0;			//系统运行时间，从0到600s
+
+//飞行器部分
+float wny_obs_vx[3]={0.0,0.0,0.0,0.0};
+float wny_obs_vy[3]={0.0,0.0,0.0,0.0};
+float wny_obstacle_vx=0.0;
+float wny_obstacle_vy=0.0;
+float wny_tar_vx=0.0;
+float wny_tar_vy=0.0;
+double wny_quad_vx=0.0;
+double wny_quad_vy=0.0;
+float wny_quad_vz=0.0;
+float wny_quad_vyaw=0.0;
+float wny_quad_vx_last=0.0;
+float wny_quad_vy_last=0.0;
+float wny_quad_ax=0.0;
+float wny_quad_ay=0.0;
+
+
+
+/*第2部分：循环运算*/
+ros::Rate m(50);
+while(ros::ok())
+{
+	/*chapter1：数据读取*/
+	//障碍物部分（数值不超过4）
+	wny_obs_number=  ;	
+	for(int i=0;i<wny_obs_number;i++)	//赋真实值
+	{
+		wny_obs_rela_posx[i]=    ;
+		wny_obs_rela_posy[i]=    ;
+	}
+	for(int i=0;i<(4-wny_obs_number);i++)	//赋安全值（与障碍物相对距离10m）
+	{
+		wny_obs_rela_posx[wny_obs_number+i]=10.0;
+		wny_obs_rela_posy[wny_obs_number+i]=10.0;
+	}
+	//目标部分（默认选取已完成，读取唯一目标）
+	wny_tar_rela_posx=    ;	
+	wny_tar_rela_posy=    ;
+	wny_tar_rela_pos=    ;
+	wny_tar_theta=    ;
+	//边界部分
+	wny_side_check=    ;
+	wny_side_corner=    ;
+	//高度部分
+	wny_quad_height=    ;
+	//顶层部分
+	wny_interaction_number=    ;
+	for(int i=0;i<wny_interaction_number;i++)	//赋真实值
+	{
+		wny_interaction_choice[i]=    ;
+	}
+	for(int i=0;i<(6-wny_interaction_number);i++)	//赋安全值（0，表示不交互）
+	{
+		wny_interaction_choice[wny_interaction_number+i]=0;
+	}
+	//底层部分
+	wny_interaction_motion=    ;
+	//时间部分
+	 wny_time=    ;
+
+	/*chapter2：信号处理*/
+	/*part1：障碍物距离排序*/
+	//排序后，按序号从小到大，相对距离依次增大，障碍物不足4个时，后面多余的数据均为10.0
+	if(wny_obs_number>1)		//当障碍物数量大于1时，排序有意义，进行排序
+	{
+		for(int i=0;i<(wny_obs_number-1);i++)	//循环处理每个有效障碍物信息
+		{
+			for(int j=(i+1);j<wny_obs_number;j++)
+			{
+				//如果前大后小，则交换二者数值
+				if((wny_obs_rela_posx[j]*wny_obs_rela_posx[j]+wny_obs_rela_posy[j]*wny_obs_rela_posy[j])<=(wny_obs_rela_posx[i]*wny_obs_rela_posx[i]+wny_obs_rela_posy[i]*wny_obs_rela_posy[i]))	
+				{
+					wny_obs_tempx=wny_obs_rela_posx[j];
+					wny_obs_tempy=wny_obs_rela_posy[j];
+					wny_obs_rela_posx[j]=wny_obs_rela_posx[i];
+					wny_obs_rela_posy[j]=wny_obs_rela_posy[i];
+					wny_obs_rela_posx[i]=wny_obs_tempx;
+					wny_obs_rela_posy[i]=wny_obs_tempy;
+				}			
+			}
+		}
+	}
+
+	/*part2：障碍物运动方向提取*/
+	//提取四个障碍物的运动方向，以序号为准而不是以真实障碍物为准，在障碍物检测准确的前提下序号为准等同于真实障碍物为准
+	for(int i=0;i<wny_obs_number;i++)
+	{
+		
+	}
+	
+
+
+
+	
+
+
+	/*part3：目标信息滤波*/
+	//首先根据目标信息特性，确定是否需要滤波（目前暂时使用）
+	
+
+
+
+
+
+
+	/*part4：边界信息滤波*/
+	//首先根据边界信息特性，确定是否需要滤波（目前暂时不使用）
+	//均值滤波，进行读取标志位变化后的一段滤波判断，如果均值更接近于变化后的值，则取后者，否则取前者（在不变的时候保持上一次的赋值，在初始的时候为0）
+	if((wny_side_flag!=wny_side_flag_last)&&wny_side_filter==0)	//两时刻之间读取的值不等，则进入均值滤波判断（可能是真实变化，也可能是检测噪声）
+	{
+		wny_side_filter=1;
+		wny_side_first=wny_side_flag_last;
+		wny_side_second=wny_side_flag;
+	}
+	if(wny_side_filter==1)			//均值滤波，存储10次数据判断，频率50Hz，耗时0.2s（次数越大，越准确，同时越慢）
+	{
+		if(wny_side_count<10)		//取10次数据加和
+		{
+			wny_side_count++;
+			wny_side_flag_sum=wny_side_flag_sum+wny_side_flag;	//当读取值不同时，从新值开始计数
+		}
+		if(wny_side_count==10)		//取10次数据均值，并比较，选取边界信息标志位的使用值
+		{
+			wny_side_flag_mean=wny_side_flag_sum/10.0;
+			if(fabs(wny_side_flag_mean-wny_side_first)<=fabs(wny_side_flag_mean-wny_side_second))		//如果均值离上一时刻的值更近，则取上一时刻的值为使用值
+			{
+				wny_side_judge=wny_side_first;
+			}
+			else if(fabs(wny_side_flag_mean-wny_side_first)>fabs(wny_side_flag_mean-wny_side_second))	//如果均值离这一时刻的值更近，则取这一时刻的值为使用值
+			{
+				wny_side_judge=wny_side_second;
+			}
+			wny_side_filter=0;	//当完成10次计数的均值滤波后，将滤波标志位置0,将计数标志位置0，读取数据加和置0，可以再次进行其后的判断
+			wny_side_count=0;
+			wny_side_flag_sum=0.0;
+		}
+	}
+	wny_side_flag_last=wny_side_flag;	//存取上一时刻的读取标志位
+	
+	/*part5：高度信息滤波*/
+	//首先根据高度信息特性，确定是否需要滤波（目前暂时使用）
+	//中值滤波，去除噪声点，平滑输入，6组数据中值滤波，延时0.12s（高度信息均为正）	
+	for(int i=5;i>0;i--)		//顺序存储读取的原始数据（移位寄存器）
+	{
+		wny_quad_hfilter[i]=wny_quad_hfilter[i-1];
+	}
+	wny_quad_hfilter[0]=wny_quad_height;
+	for(int i=0;i<5;i++)		//由前至后，从小到大排序6组数据
+	{
+		for(int j=(i+1);j<6;j++)
+		{
+			//如果靠前的数值大于靠后的，则二者交换
+			if(wny_quad_hfilter[i]>=wny_quad_hfilter[j])
+			{
+				wny_quad_htemp=wny_quad_hfilter[i];
+				wny_quad_hfilter[i]=wny_quad_hfilter[j];
+				wny_quad_hfilter[j]=wny_quad_htemp;
+			}
+		}
+	}
+	wny_quad_posz=(wny_quad_hfilter[2]+wny_quad_hfilter[3])/2.0;	//取数列中间两个数据的平均值
+
+	/*part6：顶层指令处理*/
+	//判断前后是否相同，相同时wny_interaction_flag置0，不同时wny_interaction_flag置1
+	for(int i=0;i<6;i++)
+	{
+		if(wny_interaction_choice_last[i]!=wny_interaction_choice[i])		//有一位不同，则跳出循环，wny_interaction_flag置1
+		{
+			wny_interaction_flag=1;
+			break;
+		}
+		else if(wny_interaction_choice_last[i]==wny_interaction_choice[i])	//每一位相同，wny_interaction_flag置0
+		{
+			wny_interaction_flag=0;
+		}
+	}
+	for(int i=0;i<6;i++)		//按顺序存储上一时刻的顶层交互指令序列
+	{
+		wny_interaction_choice_last[i]=wny_interaction_choice[i];
+	}
+
+	/*chapter3：状态判断*/
+	/*part1：模式选取*/
+	//根据障碍物与目标的运动信息，判断三种情况：
+	//1.危险，需要放弃交互并避障；
+	//2.暂时无法交互，需要跟踪待交互目标，将其保持在视野内，并保持与障碍物的安全距离
+	//3.可以交互，执行对应45度或180度交互动作，交互动作不包含避障
+	//有效避障包含两方面：1.对于障碍物和目标运动信息的判断；2.无论飞行器处在三种情况中的哪一种，都持续的进行判断，并及时调整其模式
+	
+
+
+	/*part2：效果判断*/
+	//在飞行器升高以后，根据重新给出的目标速度方向信息，判断本次交互是否有效
+	
+
+
+
+
+
+	/*chapter4：动作执行*/
+	/*part1：危险模式*/
+	
+
+
+
+
+
+
+	/*part2：等待模式*/
+
+
+
+
+
+
+
+
+	/*part3：交互模式*/
+
+
+
+
+
+
+
+	/*part4：*/
+
+
+
+	/*chapter5：指令限幅*/
+
+
+
+
+
+
+	/*chapter6：指令发送*/
+	//三维速度加偏航角速度，在机体系中（需要先从赛场动坐标系转换到机体系）
+	drone->attitude_control( Flight::HorizontalLogic::HORIZONTAL_VELOCITY |
+        			 Flight::VerticalLogic::VERTICAL_VELOCITY |
+        	                 Flight::YawLogic::YAW_PALSTANCE |
+        	                 Flight::HorizontalCoordinate::HORIZONTAL_BODY |			
+        	                 Flight::SmoothMode::SMOOTH_ENABLE,
+        	                 wny_quad_vx,wny_quad_vy,wny_quad_vz,wny_quad_vyaw);
+	m.sleep();
+	ros::spinOnce();
+}

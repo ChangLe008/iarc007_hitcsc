@@ -1,0 +1,285 @@
+/*
+ * pub.h
+ *
+ *  Created on: 2016年7月26日
+ *      Author: hitcsc
+ */
+
+#ifndef DJI_GUIDANCE_SDK_INCLUDE_PUB_H_
+#define DJI_GUIDANCE_SDK_INCLUDE_PUB_H_
+#include "functions.h"
+void ultrasonic_callback(const sensor_msgs::LaserScan& g_ul)
+{
+    //printf("hy---frame_id: %s stamp: %d\n", g_ul.header.frame_id.c_str(), g_ul.header.stamp.sec );
+    /*for (int i = 0; i < 5; i++){
+        printf("hy---ultrasonic distance: [%f]  reliability: [%d]\n", g_ul.ranges[i], (int)g_ul.intensities[i] );
+    }*/
+    if(g_ul.ranges[0] > 0){
+    	height_zy = g_ul.ranges[0];
+    }
+    else{
+ 	//height_zy = height_zy;
+    }
+    //height_zy=Low_Pass(height_zy);
+	//printf("调用函数----- height_zy = %f\n",height_zy);
+}
+void depth_image_callback(const sensor_msgs::ImageConstPtr& depth_img)
+{
+   cv_bridge::CvImagePtr cv_ptr;
+    try {
+        cv_ptr = cv_bridge::toCvCopy(depth_img, sensor_msgs::image_encodings::MONO16);
+      //  printf("%s\n",cv_ptr->header.frame_id);
+    }
+    catch (cv_bridge::Exception& e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+
+
+    if(cv_ptr->header.frame_id=="guidance_1")
+      {
+    	int depth_tmp;
+    	//cv_ptr->image.convertTo(depthMatShow1_3, CV_8UC1);
+   	 for(int j=0;j<HEIGHT;j++)
+   	 {
+   		 for (int i=0;i<WIDTH;i++)
+   	     {
+   			 depth_tmp = cvRound( float(cv_ptr->image.at<short>(j,i)) / 128 * 50);
+   		   	 if(depth_tmp > 255)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   		   	 if(depth_tmp < 10)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   			 depthMatShow1_0.at<uchar>(j,i) = depth_tmp;
+
+   	     }
+   	  }
+      	 //cv::imshow("depth_image_0", depthMatShow1_0);
+      	vbus_num = 0;
+
+      }
+    if(cv_ptr->header.frame_id=="guidance_2")
+      {
+    	int depth_tmp;
+    	//cv_ptr->image.convertTo(depthMatShow1_3, CV_8UC1);
+   	 for(int j=0;j<HEIGHT;j++)
+   	 {
+   		 for (int i=0;i<WIDTH;i++)
+   	     {
+   			 depth_tmp = cvRound( float(cv_ptr->image.at<short>(j,i)) / 128 * 50);
+   		   	 if(depth_tmp > 255)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   		   	 if(depth_tmp < 10)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   			 depthMatShow1_1.at<uchar>(j,i) = depth_tmp;
+   	     }
+   	  }
+      	 //cv::imshow("depth_image_1", depthMatShow1_1);
+      	vbus_num = 1;
+      }
+    if(cv_ptr->header.frame_id=="guidance_3")
+      {
+    	int depth_tmp;
+   	 for(int j=0;j<HEIGHT;j++)
+   	 {
+   		 for (int i=0;i<WIDTH;i++)
+   	     {
+   			 depth_tmp = cvRound( float(cv_ptr->image.at<short>(j,i)) / 128 * 50);
+   		   	 if(depth_tmp > 255)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   		   	 if(depth_tmp < 10)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   			 depthMatShow1_2.at<uchar>(j,i) = depth_tmp;
+   	     }
+   	  }
+   	 //cv::imshow("depth_image_2", depthMatShow1_2);
+      	vbus_num = 2;
+      }
+    if(cv_ptr->header.frame_id=="guidance_4")
+      {
+    	int depth_tmp;
+   	 for(int j=0;j<HEIGHT;j++)
+   	 {
+   		 for (int i=0;i<WIDTH;i++)
+   	     {
+   			 depth_tmp = cvRound( float(cv_ptr->image.at<short>(j,i)) / 128 * 50);
+   		   	 if(depth_tmp > 255)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   		   	 if(depth_tmp < 10)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   			 depthMatShow1_3.at<uchar>(j,i) = depth_tmp;
+   	     }
+   	  }
+      	  cv::imshow("depth_image_3", depthMatShow1_3);
+      	vbus_num = 3;
+      }
+    if(cv_ptr->header.frame_id!="guidance_4"&&cv_ptr->header.frame_id!="guidance_1"&&cv_ptr->header.frame_id!="guidance_2"&&cv_ptr->header.frame_id!="guidance_3")
+      {
+    	int depth_tmp;
+   	 for(int j=0;j<HEIGHT;j++)
+   	 {
+   		 for (int i=0;i<WIDTH;i++)
+   	     {
+   			 depth_tmp = cvRound( float(cv_ptr->image.at<short>(j,i)) / 128 * 50);
+   		   	 if(depth_tmp > 255)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   		   	 if(depth_tmp < 10)
+   		    	 {
+   		    		 depth_tmp = 1;
+   		    	 }
+   			 depthMatShow1_4.at<uchar>(j,i) = depth_tmp;
+   	     }
+   	  }
+      	  //cv::imshow("depth_image_4", depthMatShow1_4);
+      	vbus_num = 4;
+      }
+    cv::waitKey(1);
+}
+ CvMat *q_guidance=cvCreateMat(4,1,CV_32FC1);
+ float roll_test;
+ float pitch_test;
+ float yaw_test;
+void imu_callback(const geometry_msgs::TransformStamped& g_imu)
+{
+   // printf( "frame_id: %s stamp: %d\n", g_imu.header.frame_id.c_str(), g_imu.header.stamp.sec );
+    //printf( "imu: [%f %f %f %f %f %f %f]\n", g_imu.transform.translation.x, g_imu.transform.translation.y, g_imu.transform.translation.z,
+						//g_imu.transform.rotation.x, g_imu.transform.rotation.y, g_imu.transform.rotation.z, g_imu.transform.rotation.w );
+
+    cvmSet(q_guidance,0,0,g_imu.transform.rotation.w);
+    cvmSet(q_guidance,1,0,g_imu.transform.rotation.x);
+    cvmSet(q_guidance,2,0,g_imu.transform.rotation.y);
+    cvmSet(q_guidance,3,0,g_imu.transform.rotation.z);
+/*
+    cvmSet(q_guidance,0,0,1);
+    cvmSet(q_guidance,1,0,0);
+    cvmSet(q_guidance,2,0,0);
+    cvmSet(q_guidance,3,0,0);
+*/
+
+ //Quaternion_To_Euler2(g_imu.transform.rotation.w,g_imu.transform.rotation.x,g_imu.transform.rotation.y,g_imu.transform.rotation.z,&roll_test,&pitch_test,&yaw_test);
+  // printf("roll pitch yaw========%f  %f   %f\n",yaw_test,pitch_test,roll_test);
+}
+void left_image_callback(const sensor_msgs::ImageConstPtr& left_img)
+{
+    cv_bridge::CvImagePtr cv_ptrl;
+    try {
+        cv_ptrl = cv_bridge::toCvCopy(left_img, sensor_msgs::image_encodings::MONO8);
+    }
+    catch (cv_bridge::Exception& e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+
+    cv::Mat left8_0(HEIGHT, WIDTH, CV_8UC1);
+       cv::Mat left8_1(HEIGHT, WIDTH, CV_8UC1);
+       cv::Mat left8_2(HEIGHT, WIDTH, CV_8UC1);
+       cv::Mat left8_3(HEIGHT, WIDTH, CV_8UC1);
+       cv::Mat left8_4(HEIGHT, WIDTH, CV_8UC1);
+       if(cv_ptrl->header.frame_id=="guidance_1")
+       {
+      	    cv_ptrl->image.convertTo(left8_1, CV_8UC1);
+    	   leftMatShow1_1 = left8_1.clone();
+       	  vbus_num = 1;
+      /// 	cv::imshow("left_image_1", leftMatShow1_1);
+       }
+       if(cv_ptrl->header.frame_id=="guidance_2")
+         {
+       	    cv_ptrl->image.convertTo(left8_2, CV_8UC1);
+         	 // cv::imshow("depth_image_2", left8_2);
+         	 leftMatShow1_2 = left8_2.clone();
+         	vbus_num = 2;
+         	//printf("succcess!!!222222222222\n");
+         	//cv::imshow("left_image_2", leftMatShow1_2);
+         }
+       if(cv_ptrl->header.frame_id=="guidance_3")
+         {
+       	     cv_ptrl->image.convertTo(left8_3, CV_8UC1);
+         	 // cv::imshow("depth_image_3", depthMatShow1_3);
+       	     leftMatShow1_3 = left8_3.clone();
+         	vbus_num = 3;
+         	//printf("succcess!!!33333333333333\n");
+         	//cv::imshow("left_image_3", leftMatShow1_3);
+         }
+       if(cv_ptrl->header.frame_id=="guidance_4")
+         {
+
+       	cv_ptrl->image.convertTo(left8_4, CV_8UC1);
+         	 // cv::imshow("depth_image_4", depthMatShow1_4);
+         	 leftMatShow1_4 = left8_4.clone();
+         	vbus_num = 4;
+         	//cv::imshow("left_image_4", leftMatShow1_4);
+         }
+       if(cv_ptrl->header.frame_id=="guidance_0")
+          {
+          	cv_ptrl->image.convertTo(left8_0, CV_8UC1);
+          	 // cv::imshow("depth_image_0", depthMatShow1_0);
+          	  leftMatShow1_0 =left8_0.clone();
+          	vbus_num = 0;
+          	cv::imshow("left_image_0", leftMatShow1_0);
+          }
+
+    cv::waitKey(1);
+}
+
+/* right greyscale image */
+void right_image_callback(const sensor_msgs::ImageConstPtr& right_img)
+{
+    cv_bridge::CvImagePtr cv_ptr;
+    try {
+        cv_ptr = cv_bridge::toCvCopy(right_img, sensor_msgs::image_encodings::MONO8);
+    }
+    catch (cv_bridge::Exception& e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+
+    //cv::imshow("right_image", cv_ptr->image);
+    cv::waitKey(1);
+}
+void velocity_callback(const geometry_msgs::Vector3Stamped& g_vo)
+{
+   // printf( "frame_id: %s stamp: %d\n", g_vo.header.frame_id.c_str(), g_vo.header.stamp.sec );
+   // printf( "velocity: [%f %f %f]\n", g_vo.vector.x, g_vo.vector.y, g_vo.vector.z );
+}
+
+/* obstacle distance */
+void obstacle_distance_callback(const sensor_msgs::LaserScan& g_oa)
+{
+    //printf( "frame_id: %s stamp: %d\n", g_oa.header.frame_id.c_str(), g_oa.header.stamp.sec );
+    //printf( "obstacle distance: [%f %f %f %f %f]\n", g_oa.ranges[0], g_oa.ranges[1], g_oa.ranges[2], g_oa.ranges[3], g_oa.ranges[4] );
+}
+
+/* ultrasonic */
+//void ultrasonic_callback(const sensor_msgs::LaserScan& g_ul)
+//{
+//    //printf( "frame_id: %s stamp: %d\n", g_ul.header.frame_id.c_str(), g_ul.header.stamp.sec );
+//   // for (int i = 0; i < 5; i++)
+//        //printf( "ultrasonic distance: [%f]  reliability: [%d]\n", g_ul.ranges[i], (int)g_ul.intensities[i] );
+//   // poslyb.z= g_ul.ranges[0];
+//}
+
+/* motion */
+void position_callback(const geometry_msgs::Vector3Stamped& g_pos)
+{
+	//printf("frame_id: %s stamp: %d\n", g_pos.header.frame_id.c_str(), g_pos.header.stamp.sec);
+	//for (int i = 0; i < 5; i++)
+		//printf("global position: [%f %f %f]\n", g_pos.vector.x, g_pos.vector.y, g_pos.vector.z);
+}
+#endif /* DJI_GUIDANCE_SDK_INCLUDE_PUB_H_ */

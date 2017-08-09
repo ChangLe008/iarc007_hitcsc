@@ -1,0 +1,5 @@
+<launch>
+   <node pkg="rosbag" type="record" name="record" args="-O /home/hitcsc/catkin_ws/src/iarc/doc/navigation/bianjie.bag /iarc/wide_angle_video /network_client/network_optitrack_data
+ /dji_sdk/velocity /dji_sdk/attitude_quaternion /ultrasonic">
+   </node>
+</launch>

@@ -1,0 +1,553 @@
+#include "iarc007/hy_target/target.h"
+#include <ros/ros.h>
+#include <fstream>
+
+using namespace AprilTags;
+#define LOWSPACE 80//80
+#define HIGHSPACE 120//120
+Direction_Mode pre_Direction_mode=DIRECTION_LOW;
+Track_Mode pre_Track_mode=TRACK_LOW;
+
+void target(IplImage* img,CvMat* R,double h,PosPoint* point,int mode,IplImage* dst)
+{
+	CvMat* P=cvCreateMat(3,1,CV_32FC1);
+	CvMat* intrinsic=(CvMat*)cvLoad("/home/hitcsc/catkin_ws/src/iarc007/doc/Intrinsics.xml");
+	CvMat* distortion=(CvMat*)cvLoad("/home/hitcsc/catkin_ws/src/iarc007/doc/Distortion.xml");
+	IplImage* img_undistortion=cvCreateImage(cvGetSize(img),8,3);
+	IplImage* mapx=cvCreateImage(cvGetSize(img),IPL_DEPTH_32F,1);
+	IplImage* mapy=cvCreateImage(cvGetSize(img),IPL_DEPTH_32F,1);
+	vector<Rect> rect;
+	CvPoint2D32f  p={0.};
+	CvPoint2D32f  p_start={0.};
+	CvPoint2D32f  p_end={0.};
+	PicPoint  picp={0};
+	PosPoint posp={0};
+	CvPoint ret={0};
+
+	Track_Mode n_Track_mode;
+	Direction_Mode n_Direction_mode;
+
+	float angle=0;
+	posp.num=0;
+	posp.x[0]=0;
+	posp.x[0]=0;
+	int dir_flag=0;
+	target_description L_target;
+	L_target.target_flag=false;
+
+	if(img)
+	{
+		if(pre_Direction_mode==DIRECTION_HIGH&&h>HIGHSPACE)
+		{
+			n_Direction_mode=DIRECTION_HIGH;
+			pre_Direction_mode=n_Direction_mode;
+		}
+		else if(pre_Direction_mode==DIRECTION_HIGH&&h<=HIGHSPACE)
+		{
+			n_Direction_mode=DIRECTION_MID;;
+			pre_Direction_mode=n_Direction_mode;
+		}
+
+		else if(pre_Direction_mode==DIRECTION_MID&&h>HIGHSPACE+20)
+		{
+			n_Direction_mode=DIRECTION_HIGH;
+			pre_Direction_mode=n_Direction_mode;
+		}
+		else if(pre_Direction_mode==DIRECTION_MID&&h<=HIGHSPACE+20&&h>LOWSPACE)
+		{
+			n_Direction_mode=DIRECTION_MID;
+			pre_Direction_mode=n_Direction_mode;
+		}
+		else if(pre_Direction_mode==DIRECTION_MID&&h<=LOWSPACE)
+		{
+			n_Direction_mode=DIRECTION_LOW;
+			pre_Direction_mode=n_Direction_mode;
+		}
+
+		else if(pre_Direction_mode==DIRECTION_LOW&&h<=LOWSPACE+20)
+		{
+			n_Direction_mode=DIRECTION_LOW;
+			pre_Direction_mode=n_Direction_mode;
+		}
+		else if(pre_Direction_mode==DIRECTION_LOW&&h>LOWSPACE+20)
+		{
+			n_Direction_mode=DIRECTION_MID;
+			pre_Direction_mode=n_Direction_mode;
+		}
+
+
+		if(pre_Track_mode==TRACK_HIGH&&h>LOWSPACE)
+		{
+			n_Track_mode=TRACK_HIGH;
+			pre_Track_mode=n_Track_mode;
+		}
+		else if(pre_Track_mode==TRACK_HIGH&&h<LOWSPACE)
+		{
+			n_Track_mode=TRACK_LOW;
+			pre_Track_mode=n_Track_mode;
+		}
+
+		else if(pre_Track_mode==TRACK_LOW&&h<LOWSPACE+20)
+		{
+			n_Track_mode=TRACK_LOW;
+			pre_Track_mode=n_Track_mode;
+		}
+		else if(pre_Track_mode==TRACK_LOW&&h>LOWSPACE+20)
+		{
+			n_Track_mode=TRACK_HIGH;
+			pre_Track_mode=n_Track_mode;
+		}
+		Mat srcimg(img);
+		cvGEMM(intrinsic,R,1,NULL,0,R);		//得到内参
+		 //robot_sta_all.target_count_now =0;
+		///////单目标测试使用
+		if(robot_sta_all.target_count_now==0)
+			mode=TARGET_SEARCH;
+//			target_count=0;
+		else
+			mode=TARGET_TRACKING;
+		//////////
+		cv::Mat src_mat(img);
+		cv::Rect Rect;
+		//1.检测 2.跟踪多目标 3.跟踪多目标并进行检测 4.跟踪单个目标
+		if( robot_sta_all.target_count_now == 0 && mode == TARGET_SEARCH )//检测
+		{
+			cout << "Detection\n";
+			imageprocessing(img,&picp,h);
+			//Multi_Scale_Obj_Dec((int)h, srcimg, myHOG, { 0, 0 }, WIN, Size(16, 16), 1.1, 2, 1, 1);
+			//cout << "Target number: " << Obj_Out.size() << "\n";
+			cout << "Target number: " << picp.num << "\n";
+			//robot_sta_all.target_count_now = Obj_Out.size();
+			//for (int i = 0; i < Obj_Out.size(); i++)
+			//robot_sta_all.target_count_now = picp.num;
+			printf("int =%d\n",picp.num);
+			if(picp.num>10)		//picp的值小于十个
+			{
+				picp.num=10;
+			}
+			int j=0;
+			for(int i=0;i<picp.num;i++)
+			{
+				int xx = picp.u[i];
+				int yy = picp.v[i];
+				int flag1 = Ell_Inside_Cal(ELL_CEN, ELL_A, ELL_B, Point(xx, yy));
+
+				//if(picp.u[i]<=10||picp.u[i]>=630||picp.v[i]<=10||picp.v[i]>=470)
+				if(flag1 == 0)
+					continue;
+				Rect.x=picp.u[i]-11;
+				Rect.y=picp.v[i]-11;
+				Rect.width=22;
+				Rect. height=22;
+				//robot_sta_all.robot_sta_single[i].Track_Now = Dec_Tra_Connect(Obj_Out[i], 0.333);
+				robot_sta_all.robot_sta_single[j].Track_Now =Rect;
+				robot_sta_all.robot_sta_single[j].robot_sta_now = ROBOT_GOT;
+				robot_sta_all.robot_sta_single[j].logo_num=0;
+				j++;
+			}
+			printf("j=%d\n",j);
+			robot_sta_all.target_count_now =j;
+			Vec_Init();
+		}
+		else if(robot_sta_all.target_count_now != 0 && mode == TARGET_SEARCH)//跟踪多目标//并检测
+		{
+			if(Frame_All%300==500)//跟踪阶段，每三帧检测一次
+			{
+				//Multi_Scale_Obj_Dec((int)h, srcimg, myHOG, { 0, 0 }, WIN, Size(16, 16), 1.1, 2, 1, 1);
+				imageprocessing(img,&picp,h);
+				//if(robot_sta_all.target_count_now <= Obj_Out.size())//如果检测的目标数多于跟踪的目标，更新信息
+				if(1)
+				{
+					printf("定帧检测目标数 = %d\n",picp.num);
+					robot_sta_all.target_count_now =picp.num;
+					for (int i = 0; i < picp.num; i++)
+					{
+						Rect.x=picp.u[i]-10;
+						Rect.y=picp.v[i]-10;
+						Rect.width=20;
+						Rect. height=20;
+						//robot_sta_all.robot_sta_single[i].Track_Now = Dec_Tra_Connect(Obj_Out[i], 0.333);
+						robot_sta_all.robot_sta_single[i].Track_Now =Rect;
+						robot_sta_all.robot_sta_single[i].robot_sta_now = ROBOT_GOT;
+						robot_sta_all.robot_sta_single[i].logo_num=0;
+
+						//cvWaitKey(0);//todo
+					}
+				}
+				Vec_Init();
+			}
+			else;
+			if(robot_sta_all.target_count_now != 0)
+			{
+				All_Obj_Tra(srcimg);
+
+				for(int i=0;i<robot_sta_all.target_count_now;i++)
+				{
+					cv::rectangle(srcimg,robot_sta_all.robot_sta_single[i].Track_Now,cv::Scalar(255,255,255),3);
+					cv::circle(srcimg,cv::Point((robot_sta_all.robot_sta_single[i].Track_Now.tl().x+robot_sta_all.robot_sta_single[i].Track_Now.br().x)/2,(robot_sta_all.robot_sta_single[i].Track_Now.tl().y+robot_sta_all.robot_sta_single[i].Track_Now.br().y)/2),5,cv::Scalar(255,255,255),1);
+				}
+				imshow("camshift",srcimg);
+				 dir_flag=1;
+				Refresh(h);
+			}else;
+		}
+		else if(mode == TARGET_TRACKING)//跟踪单个目标
+		{
+			printf("跟踪\n");
+			 dir_flag=1;
+			//Robot_Sta_Copy(Robot_Sta_Single *robot1, 第0个);
+			Robot_Sta_Copy(&robot_sta_all.robot_sta_single[0], &robot_sta_all.robot_sta_single[0]);	//结合策略
+			for(int i=1;i<robot_sta_all.target_count_now;i++)
+			{
+				 R_Sta_Reset(&(robot_sta_all.robot_sta_single[i]));
+			}
+			robot_sta_all.target_count_now=1;
+			if(h>LOWSPACE)
+			{
+				srcimg.copyTo(srcimgdraw);
+				All_Obj_Tra(srcimg);
+				cout << "In All_Obj_Tra Total num = " << robot_sta_all.target_count_now << endl;
+				Refresh(h);
+				 dir_flag=1;
+				 imshow("camshift",srcimgdraw);
+				for(int i=0;i<robot_sta_all.target_count_now;i++)
+				{
+					//cv::rectangle(srcimg,robot_sta_all.robot_sta_single[i].Track_Now,cv::Scalar(255,255,255),3);
+					//cv::circle(srcimg,cv::Point((robot_sta_all.robot_sta_single[i].Track_Now.tl().x+robot_sta_all.robot_sta_single[i].Track_Now.br().x)/2,(robot_sta_all.robot_sta_single[i].Track_Now.tl().y+robot_sta_all.robot_sta_single[i].Track_Now.br().y)/2),5,cv::Scalar(255,255,255),1);
+				}
+			}
+			else if(h<LOWSPACE)
+			{
+				ExtendCV::Low_Target(srcimg,L_target);
+				if(L_target.target_flag == true)
+				{
+					robot_sta_all.robot_sta_single[0].Track_Now = L_target.roi_rect;
+					robot_sta_all.target_count_now = 1;
+				}
+				else
+				{
+					robot_sta_all.target_count_now = 0;
+				}
+			}
+			else
+				;
+			//imshow("camshift",srcimg);
+		}
+		else;
+
+		//目标点位置结算
+		for(int i=0;i<robot_sta_all.target_count_now;i++)
+		//for(int i=0;i<0;i++)
+		{
+			//printf("aaa\n");
+			///?????????
+			//todo
+			ret=DistortionPoint((robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Now.tl().x+robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Now.br().x)/2,(robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Now.tl().y+robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Now.br().y)/2,distortion, intrinsic);
+			//printf("bbb=%d\t%d\n",ret.x,ret.y);
+			dianbianhuan(R, P, h,ret.x,ret.y);
+			point->x[i]=cvmGet(P,0,0);//结算的位置信息返回
+			point->y[i]=cvmGet(P,1,0);
+		}
+		//目标点位置结算结束
+
+		//目标方向
+
+		if( dir_flag==1)
+		{
+			if(h>HIGHSPACE)
+			{
+				for(int i=0;i<robot_sta_all.target_count_now;i++)
+				{
+					//p.x = robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Target_Box_Now.center.x;
+					//p.y = robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Target_Box_Now.center.y;
+					//图像畸变校正
+					//vector<Point> longcenter;
+					//RoaRec_Long_Cal(robot_sta_all.robot_sta_single[i].Box2D_Now, longcenter);
+					//RoaRec_Draw(img, robot_sta_all.robot_sta_single[i].Box2D_Now, longcenter);
+					cvInitUndistortMap(intrinsic,distortion,mapx,mapy);
+					cvRemap(img,img_undistortion,mapx,mapy);
+					p.x=(float)(ret.x);//输入点为矫正后图像的点
+					p.y=(float)(ret.y);
+					angle=find_direction_c(img_undistortion,&p,R,h,distortion,intrinsic);
+					point->angle[i]=angle;
+					printf("angle=%f\n",angle);
+				}
+			}
+			else if(h<HIGHSPACE&&h>LOWSPACE)
+			{
+				for(int i=0;i<robot_sta_all.target_count_now;i++)
+				{
+					//p.x = robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Target_Box_Now.center.x;
+					//p.y = robot_sta_all.robot_sta_single[robot_sta_all.track[i]].Track_Target_Box_Now.center.y;
+					//图像畸变校正
+					cvInitUndistortMap(intrinsic,distortion,mapx,mapy);
+					cvRemap(img,img_undistortion,mapx,mapy);
+					p.x=(float)(ret.x);//输入点为矫正后图像的点
+					p.y=(float)(ret.y);
+					angle=find_direction(img_undistortion,&p,R,h);
+					point->angle[i]=angle;
+					printf("angle=%f\n",angle);
+				}
+			}
+			else
+			{
+				if(L_target.target_flag==true)
+				{
+					dianbianhuan(R, P, h,L_target.start_point.x,L_target.start_point.y);
+					p_start.x=cvmGet(P,0,0);
+					p_start.y=cvmGet(P,1,0);
+					dianbianhuan(R, P, h,L_target.end_point.x,L_target.end_point.y);
+					p_end.x=cvmGet(P,0,0);
+					p_end.y=cvmGet(P,1,0);
+					point->angle[0]=atan2((p_start.y-p_end.y),(p_start.x-p_end.x));
+				}
+				else
+					point->angle[0]=10;
+			}
+		}
+		//目标方向结束
+		point->num=robot_sta_all.target_count_now;
+	}
+
+	cvShowImage("img",img);
+	cvReleaseMat(&intrinsic);
+	cvReleaseMat(&distortion);
+	cvReleaseMat(&P);
+	cvReleaseImage(&img_undistortion);
+	cvReleaseImage(&mapx);
+	cvReleaseImage(&mapy);
+	return;
+}
+
+float find_direction(IplImage* src,CvPoint2D32f* p,CvMat* R,double h)
+{
+		IplImage* img_256=cvCreateImage(cvSize(256,256),8,3);
+		double min_distance = 1000/h;
+		double angle=10.0;
+		int u=0,v=0;
+		int rect=3000/h;
+		int pointSize=0;
+		CvPoint  Endpoint[8]={0};
+		CvMat* P=cvCreateMat(3,1,CV_32FC1);
+		CvPoint2D32f  world_p[8]={0.};
+
+		u=(int)(p->x);
+		v=(int)(p->y);
+		rect=rect*2;
+	    	if(rect>120)
+	    	{
+	    		rect=120;
+	    	}
+
+		if(u-rect*4/2<0)
+		{
+			u=rect*4/2;
+		}
+		else if(u+rect*4/2>640)
+		{
+			u=640-rect*4/2;
+		}
+		else
+		{
+		;
+		}
+
+		if(v-rect*4/2<0)
+		{
+			v=rect*4/2;
+		}
+		else if(v+rect*4/2>480)
+		{
+			v=480-rect*4/2;
+		}
+		else
+		{
+		;
+		}
+		cvSetImageROI(src,cvRect(u-rect*4/2,v-rect*4/2,rect*4,rect*4));
+		//cvResize(src,img_64,CV_INTER_AREA);
+		cvResize(src,img_256,CV_INTER_AREA);
+		cvSmooth(img_256,img_256,CV_GAUSSIAN,5,5);
+
+		cv::Mat image(img_256);
+		cv::Mat image_gray;
+		//cvSetImageROI(img_gray,cvRect(u-rect*4/2,v-rect*3/2,rect*4,rect*3));
+
+	    cv::cvtColor(image,image_gray,CV_BGR2GRAY);
+	 //   Mat srcROI = image_gray(Rect(u-rect*4/2,v-rect*3/2,rect*4,rect*3));
+	    std::vector<Quad> quads=AprilTags::extractTags(image_gray,10,10);
+
+	            cout << quads.size() << " quads detected:" << endl;
+	            for (unsigned int qi = 0; qi < quads.size(); qi++ )
+	            {
+		            Quad &quad = quads[0];
+		            pointSize=quad.quadPoints.size();
+		            std::vector< std::pair<float,float> > p(pointSize);
+		                for(unsigned int i = 0;i<pointSize;i++){
+		                    p[i]=quad.quadPoints[i];
+		                }
+		                for(unsigned int i = 0;i<pointSize;i++){
+		                	// cv::line(image, cv::Point2f(p[1].first, p[1].second), cv::Point2f(p[1].first, p[1].second), cv::Scalar(0,255,0) ,5);
+		                	 Endpoint[i].x=(int)(p[i].first);
+		                	 Endpoint[i].y=(int)(p[i].second);
+		                	 Endpoint[i].x= Endpoint[i].x*rect*4/256;
+		                	 Endpoint[i].y= Endpoint[i].y*rect*4/256;
+		                	 Endpoint[i].x= Endpoint[i].x+u-rect*4/2;
+		                	 Endpoint[i].y= Endpoint[i].y+v-rect*4/2;
+
+		                    }
+		            cout <<pointSize<< " point  detected:" << endl;
+	            }
+	            //imshow("direction",image);
+	            /*
+	            if(quads.size()>0){
+	                for (unsigned int qi = 0; qi < quads.size(); qi++ ) {
+	                  Quad &quad = quads[qi];
+	                }
+	            }*/
+	            cvResetImageROI(src);
+
+	            //将点转换到世界坐标系下
+	            for(unsigned int i = 0;i<pointSize;i++)
+	            {
+	        	    dianbianhuan(R, P, h,Endpoint[i].x,Endpoint[i].y);
+	        	    world_p[i].x=cvmGet(P,0,0);
+	        	    world_p[i].y=cvmGet(P,1,0);
+	            }
+	            if(pointSize==0)
+	            {
+	        	    angle=10.0;
+	            }
+	            else
+	            {
+	        	    angle=atan2((world_p[4].y-world_p[5].y),(world_p[4].x-world_p[5].x));
+	            }
+	            //计算方向
+
+	            cvReleaseImage(&img_256);
+	            cvReleaseMat(&P);
+	            return angle;
+}
+
+float  find_direction_c(IplImage* src,CvPoint2D32f* p,CvMat* R,double h,CvMat* distortion,CvMat* intrinsic)
+{
+	vector<Point> longcenter;
+	RoaRec_Long_Cal(robot_sta_all.robot_sta_single[0].Box2D_Now, longcenter);
+	//RoaRec_Draw(mat, robot_sta_all.robot_sta_single[0].Box2D_Now, longcenter);
+	cv::Mat srcmat(src);
+	CvPoint line_center[2]={0};
+	line_center[0]=DistortionPoint(longcenter[0].x,longcenter[0].y,distortion,intrinsic);
+	line_center[1]=DistortionPoint(longcenter[1].x,longcenter[1].y,distortion,intrinsic);
+	int distance1=0,distance2=0;
+
+
+	IplImage* img_256=cvCreateImage(cvSize(256,256),8,3);
+	double min_distance = 1000/h;
+	double angle=10.0;
+	int u=0,v=0;
+	int rect=3000/h;
+	int pointSize=0;
+	CvPoint2D32f  w_circle={0};
+	CvPoint2D32f w_p={0};
+	CvMat* P=cvCreateMat(3,1,CV_32FC1);
+
+	u=(int)(p->x);
+	v=(int)(p->y);
+	rect=rect*2;
+	if(rect>120)
+	{
+		rect=120;
+	}
+
+	if(u-rect*4/2<0)
+	{
+		u=rect*4/2;
+	}
+	else if(u+rect*4/2>640)
+	{
+		u=640-rect*4/2;
+	}
+	else
+		;
+	if(v-rect*4/2<0)
+	{
+		v=rect*4/2;
+	}
+	else if(v+rect*4/2>480)
+	{
+		v=480-rect*4/2;
+	}
+	else
+		;
+
+	cvSetImageROI(src,cvRect(u-rect*4/2,v-rect*4/2,rect*4,rect*4));
+	//cvResize(src,img_64,CV_INTER_AREA);
+	cvResize(src,img_256,CV_INTER_AREA);
+	cvSmooth(img_256,img_256,CV_GAUSSIAN,5,5);
+
+	cv::Mat image(img_256);
+	cv::Mat image_gray;
+	//cvSetImageROI(img_gray,cvRect(u-rect*4/2,v-rect*3/2,rect*4,rect*3));
+
+	cv::cvtColor(image,image_gray,CV_BGR2GRAY);
+	cv::Mat testMat;//(frame);
+	pyrDown(image_gray,testMat);
+
+	vector<circle_found> found;
+	ExtendCV::FindCircles(testMat,found,1,1,100,200,30,7,90,0.7);//hough检测圆
+
+	cvResetImageROI(src);
+
+	int x=0;
+	int y=0;
+	if(found.size()>0)
+	{
+		x=found[0].circle[0]*2;
+		y=found[0].circle[1]*2;
+		//outfile<<"第%d帧图  目标(x,y)"<<x<<" \t"<<y<<endl;
+		cv::circle(image,cv::Point(x,y),found[0].circle[2]*2,cv::Scalar(0,255,0),2);
+		cout<<"目标中心(x,y):"<<x<<","<<y<<"pipeidu"<<found[0].score<<endl;
+		 cv::circle(image,cv::Point((x),(y)),5,cvScalar(255,0,255),1,8,0);
+
+		x= x*rect*4/256;
+		y= y*rect*4/256;
+		x= x+u-rect*4/2;
+		y= y+v-rect*4/2;
+		// printf("x=%f\ty=%f\txx=%d\ty=%d\n",x,y,p->x,p->y);
+	}
+	distance1=(x-line_center[0].x)*(x-line_center[0].x)+(y-line_center[0].y)*(y-line_center[0].y);
+	distance2=(x-line_center[1].x)*(x-line_center[1].x)+(y-line_center[1].y)*(y-line_center[1].y);
+
+	if(distance1<distance2)
+	{
+		line_center[0].x=line_center[1].x;
+		line_center[0].y=line_center[1].y;
+	}
+	//imshow("circle",image);
+	//将点转换到世界坐标系下
+
+	 cv::circle(srcmat,line_center[0],5,cvScalar(255,0,255),1,8,0);
+	 cv::circle(srcmat,cv::Point(x,y),5,cvScalar(0,0,255),1,8,0);
+	 //imshow("a",srcmat);
+	for(unsigned int i = 0;i<found.size();i++)
+	{
+		dianbianhuan(R, P, h,(int)x,(int)y);
+		w_circle.x=cvmGet(P,0,0);
+		w_circle.y=cvmGet(P,1,0);
+
+		dianbianhuan(R, P, h,line_center[0].x,line_center[0].y);
+		w_p.x=cvmGet(P,0,0);
+		w_p.y=cvmGet(P,1,0);
+	}
+	if(found.size()==0||found[0].circle[2]*2*2<100)
+	{
+		angle=10.0;
+	}
+	else
+		angle=atan2((w_circle.y-w_p.y),(w_circle.x-w_p.x));
+	//计算方向
+
+	cvReleaseImage(&img_256);
+	cvReleaseMat(&P);
+	return angle;
+}

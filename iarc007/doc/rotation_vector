@@ -1,0 +1,6 @@
+%YAML:1.0
+rotation_vector: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: f
+   data: [ 2.23143578e+00, 2.14584947e+00, 3.40050869e-02 ]

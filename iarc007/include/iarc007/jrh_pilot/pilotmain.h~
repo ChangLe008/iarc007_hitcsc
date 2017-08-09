@@ -1,0 +1,7 @@
+#ifndef  PILOTMAIN_H_
+#define PILOTMAIN_H_
+
+
+//extern CvMat *R_init;
+
+#endif

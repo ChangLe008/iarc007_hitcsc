@@ -1,0 +1,45 @@
+/* Ａ　test program */
+
+#include <iostream>
+#include <ros/ros.h>
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
+using namespace cv;
+using namespace std;
+
+int main(int argc,char** argv)
+{
+	ros::init(argc,argv,"hy_test");
+	ros::NodeHandle bh;
+	
+	VideoCapture cap;
+	
+	cap.open(0);
+	
+	if(!cap.isOpened())
+	{
+	  cout << "No video" << endl;
+	  return 0;
+	}
+	
+	Mat frame;
+	
+	namedWindow("image",1);
+	
+	while(ros::ok())
+	{
+	
+	   cap >> frame;
+	   
+	   if(!frame.data)
+	   {
+	       break;
+	   }
+       imshow("image",frame);
+    }
+    
+    return 0;
+}

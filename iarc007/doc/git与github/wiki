@@ -1,0 +1,18 @@
+1) Sign in a github account and create a repository <ChangLe008/iarc007_hitcsc>
+2) Create local git repository and upload code to git@github.com
+	git init   ----initialize a repository
+	git add <file-name> or git add . ---- add files to be uploaded
+	git commit -m "comments" ---- upload updates to local repository
+	git remote add origin git@github.com:ChangLe008/iarc007_hitcsc.git ---- add remote server as origin
+3) Create ssh key
+    cd ~/.ssh
+    rm id_rsa id_rsa.pub
+    ssh-keygen -t rsa -C "haoning008@gmail.com" ---- create ssh key and hit 3 space not to set code
+4) update ssh-key of github
+
+5) set username and user email of git
+	git config --global username "nuc_1"
+	git config --global useremail "haoning008@gmail.com"
+	
+6) upload code to web
+	git push -u origin master -f    
